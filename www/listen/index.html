@@ -1,0 +1,207 @@
+
+<!doctype html>
+
+<html>
+
+<head>
+
+  <meta charset="utf-8" />
+
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <title>Listen</title>
+
+  <style>
+
+    body {
+
+      font-family: system-ui, sans-serif;
+
+      margin: 0;
+
+      padding: 18px;
+
+      background: #111;
+
+      color: #eee;
+
+    }
+
+    .header {
+
+      text-align: center;
+
+      margin-bottom: 16px;
+
+    }
+
+    .header img {
+
+      width: 80px;
+
+      height: 80px;
+
+    }
+
+    .header h2 {
+
+      margin: 8px 0 4px 0;
+
+      color: #00e5ff;
+
+    }
+
+    .small {
+
+      opacity: .7;
+
+      font-size: 14px;
+
+    }
+
+    button {
+
+      font-size: 22px;
+
+      padding: 14px 18px;
+
+      width: 100%;
+
+      border: 2px solid #00e5ff;
+
+      border-radius: 10px;
+
+      background: #222;
+
+      color: #00e5ff;
+
+      cursor: pointer;
+
+    }
+
+    button:disabled {
+
+      opacity: 0.5;
+
+      cursor: default;
+
+    }
+
+    .idle-msg {
+
+      text-align: center;
+
+      margin-top: 24px;
+
+      padding: 20px;
+
+      border: 1px solid #333;
+
+      border-radius: 10px;
+
+      background: #1a1a1a;
+
+      color: #888;
+
+      font-size: 16px;
+
+    }
+
+    .now-playing {
+
+      text-align: center;
+
+      margin-top: 16px;
+
+      padding: 14px;
+
+      border: 1px solid #00e5ff;
+
+      border-radius: 10px;
+
+      background: #0a1a1f;
+
+      font-size: 18px;
+
+      color: #00e5ff;
+
+    }
+
+    .debug-toggle {
+
+      margin-top: 16px;
+
+      font-size: 13px;
+
+      opacity: 0.5;
+
+    }
+
+    .debug-toggle label {
+
+      cursor: pointer;
+
+    }
+
+    .box {
+
+      margin-top: 8px;
+
+      padding: 12px;
+
+      border: 1px solid #333;
+
+      border-radius: 10px;
+
+      background: #1a1a1a;
+
+      font-size: 13px;
+
+      color: #aaa;
+
+    }
+
+    .box b { color: #ccc; }
+
+    .err { color: #f44; font-weight: 600; }
+
+    .hidden { display: none; }
+
+  </style>
+
+</head>
+
+<body>
+
+  <div class="header">
+
+    <img src="logo.png" alt="Undocumented Engineer" />
+
+    <h2>Show Audio</h2>
+
+    <p class="small">Tap once to enable audio. Keep this page open during the show.</p>
+
+  </div>
+
+  <button id="enableBtn">Enable Audio</button>
+
+  <div id="idleMsg" class="idle-msg">
+
+    No show is currently broadcasting.
+
+  </div>
+
+  <div id="nowPlaying" class="now-playing hidden">
+
+    &#9835; Now Playing: <span id="trackName">-</span>
+
+  </div>
+
+  <div class="err" id="fetchErr"></div>
+
+  <div class="err" id="playErr"></div>
+
+  <div class="debug-toggle">
+
+    <label><input type="checkbox" id="debugCheck" /> Show Debug Data</lab
+

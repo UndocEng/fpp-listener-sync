@@ -1,0 +1,13 @@
+[Unit]
+Description=Listener Wi-Fi Access Point
+After=network.target systemd-networkd.service
+Wants=systemd-networkd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/hostapd /home/fpp/listen-sync/hostapd-listener.conf
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
