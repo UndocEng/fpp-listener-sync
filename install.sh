@@ -15,11 +15,11 @@ MUSIC_DIR="/home/fpp/media/music"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
+info()  { printf '%b\n' "${CYAN}[INFO]${NC} $1"; }
 
-ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
+ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
 
-fail()  { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
+fail()  { printf '%b\n' "${RED}[FAIL]${NC} $1"; exit 1; }
 
 info "Checking prerequisites..."
 
@@ -155,9 +155,11 @@ sudo sysctl -w net.ipv4.ip_forward=0 >/dev/null
 
 echo "net.ipv4.ip_forward=0" | sudo tee /etc/sysctl.d/99-no-forward.conf >/dev/null
 
-sudo iptables -C FORWARD -i wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -i wlan1 -j DROP
+if command -v iptables >/dev/null 2>&1; then
+  sudo iptables -C FORWARD -i wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -i wlan1 -j DROP
 
-sudo iptables -C FORWARD -o wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -o wlan1 -j DROP
+  sudo iptables -C FORWARD -o wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -o wlan1 -j DROP
+fi
 
 ok "IP forwarding disabled, networks isolated"
 
@@ -165,7 +167,7 @@ echo ""
 
 echo "========================================="
 
-echo -e "${GREEN}  FPP Listener Sync installed!${NC}"
+printf '%b\n' "${GREEN}  FPP Listener Sync installed!${NC}"
 
 echo "========================================="
 
@@ -181,23 +183,23 @@ info "Running self-test..."
 
 ERRORS=0
 
-systemctl is-active --quiet listener-ap && ok "listener-ap: running" || { echo -e "${RED}[FAIL] listener-ap${NC}"; ERRORS=$((ERRORS+1)); }
+systemctl is-active --quiet listener-ap && ok "listener-ap: running" || { printf '%b\n' "${RED}[FAIL] listener-ap${NC}"; ERRORS=$((ERRORS+1)); }
 
-systemctl is-active --quiet dnsmasq && ok "dnsmasq: running" || { echo -e "${RED}[FAIL] dnsmasq${NC}"; ERRORS=$((ERRORS+1)); }
+systemctl is-active --quiet dnsmasq && ok "dnsmasq: running" || { printf '%b\n' "${RED}[FAIL] dnsmasq${NC}"; ERRORS=$((ERRORS+1)); }
 
 IP=$(ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}')
 
-[ "$IP" = "192.168.50.1/24" ] && ok "wlan1: 192.168.50.1/24" || { echo -e "${RED}[FAIL] wlan1 IP: $IP${NC}"; ERRORS=$((ERRORS+1)); }
+[ "$IP" = "192.168.50.1/24" ] && ok "wlan1: 192.168.50.1/24" || { printf '%b\n' "${RED}[FAIL] wlan1 IP: $IP${NC}"; ERRORS=$((ERRORS+1)); }
 
 HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/ 2>/dev/null)
 
-[ "$HTTP" = "200" ] && ok "/listen/: HTTP 200" || { echo -e "${RED}[FAIL] /listen/: HTTP $HTTP${NC}"; ERRORS=$((ERRORS+1)); }
+[ "$HTTP" = "200" ] && ok "/listen/: HTTP 200" || { printf '%b\n' "${RED}[FAIL] /listen/: HTTP $HTTP${NC}"; ERRORS=$((ERRORS+1)); }
 
 HTTP2=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/status.php 2>/dev/null)
 
-[ "$HTTP2" = "200" ] && ok "status.php: HTTP 200" || { echo -e "${RED}[FAIL] status.php: HTTP $HTTP2${NC}"; ERRORS=$((ERRORS+1)); }
+[ "$HTTP2" = "200" ] && ok "status.php: HTTP 200" || { printf '%b\n' "${RED}[FAIL] status.php: HTTP $HTTP2${NC}"; ERRORS=$((ERRORS+1)); }
 
 echo ""
 
-[ $ERRORS -eq 0 ] && echo -e "${GREEN}All checks passed. Ready to go!${NC}" || echo -e "${RED}$ERRORS check(s) failed.${NC}"
+[ $ERRORS -eq 0 ] && printf '%b\n' "${GREEN}All checks passed. Ready to go!${NC}" || printf '%b\n' "${RED}$ERRORS check(s) failed.${NC}"
 

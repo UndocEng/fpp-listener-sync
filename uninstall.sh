@@ -5,9 +5,9 @@ set -e
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
+info()  { printf '%b\n' "${CYAN}[INFO]${NC} $1"; }
 
-ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
+ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
 
 echo ""
 
