@@ -97,7 +97,37 @@ sudo ./install.sh
 
 ```
 
+## Using on Remote FPPs
 
+This plugin works on **both Master and Remote** FPPs!
+
+### Master FPP
+- Reads its own playback status
+- Serves synced audio to visitors
+
+### Remote FPP
+- Also works! Reads its sync status from master
+- Serves audio from its own local files
+- Each remote creates its own `SHOW_AUDIO` network
+- Visitors can connect to the nearest FPP
+
+### Requirements for Remotes
+- USB Wi-Fi adapter (wlan1)
+- **Audio files must be present locally** in `/home/fpp/media/music/`
+- Audio filenames must match sequence names (e.g., `MySong.fseq` → `MySong.mp3`)
+- Same installation process as master
+
+### Multi-FPP Setup Options
+
+**Option 1: All FPPs have listener-sync**
+- Each FPP broadcasts its own `SHOW_AUDIO` network
+- Visitors connect to closest FPP
+- Good for large displays with spread-out visitors
+
+**Option 2: Only Master has listener-sync**
+- Single `SHOW_AUDIO` network
+- All visitors connect to master
+- Good for smaller displays
 
 ## Uninstall
 
