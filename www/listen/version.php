@@ -1,4 +1,23 @@
 <?php
 header('Content-Type: text/plain');
-$version = @file_get_contents('/home/fpp/fpp-listener-sync/VERSION');
-echo $version !== false ? trim($version) : '1.0.0';
+
+// Try multiple possible paths for VERSION file
+$paths = [
+    '/home/fpp/fpp-listener-sync/VERSION',
+    __DIR__ . '/../../VERSION',
+    '../VERSION'
+];
+
+$version = '1.1.0'; // Fallback version
+
+foreach ($paths as $path) {
+    if (file_exists($path)) {
+        $content = @file_get_contents($path);
+        if ($content !== false && trim($content) !== '') {
+            $version = trim($content);
+            break;
+        }
+    }
+}
+
+echo $version;

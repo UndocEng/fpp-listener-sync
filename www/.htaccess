@@ -1,16 +1,27 @@
-# Captive portal redirect - lock down public network access
+# Captive portal redirect - DENY ALL except /listen/ and /music/
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    # SECURITY: Block ALL access to FPP from public network (192.168.50.x and listen.local)
-    # Only allow /listen/ and /music/ directories
+    # SECURITY: Whitelist approach - only allow /listen/ and /music/ from public network
+    # Check if accessing from public network (192.168.50.x or listen.local)
     RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
     RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
-    RewriteCond %{REQUEST_URI} !^/listen/ [NC]
-    RewriteCond %{REQUEST_URI} !^/music/ [NC]
+    # Allow /listen/ directory and files
+    RewriteCond %{REQUEST_URI} ^/listen(/|$) [NC]
+    RewriteRule ^ - [L]
+
+    RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
+    RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
+    # Allow /music/ directory and files
+    RewriteCond %{REQUEST_URI} ^/music(/|$) [NC]
+    RewriteRule ^ - [L]
+
+    # Block EVERYTHING else from public network
+    RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
+    RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
     RewriteRule ^ /listen/ [R=302,L]
 
-    # Redirect common captive portal detection URLs to /listen/
+    # Redirect common captive portal detection URLs
     RewriteCond %{REQUEST_URI} ^/(generate_204|gen_204|hotspot-detect\.html|success\.txt|connecttest\.txt|canonical\.html)$ [NC]
     RewriteRule ^ /listen/ [R=302,L]
 </IfModule>
