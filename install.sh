@@ -103,6 +103,23 @@ sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/apache2/conf-available/li
 
 sudo a2enconf listener 2>/dev/null || true
 
+# CRITICAL: Enable .htaccess support by setting AllowOverride All
+info "Configuring Apache to allow .htaccess (required for security)..."
+
+APACHE_CONF="/etc/apache2/sites-enabled/000-default.conf"
+
+if [ -f "$APACHE_CONF" ]; then
+  # Backup original config
+  sudo cp "$APACHE_CONF" "$APACHE_CONF.listener-backup" 2>/dev/null || true
+
+  # Change AllowOverride None to AllowOverride All in /opt/fpp/www/ directory
+  sudo sed -i '/<Directory \/opt\/fpp\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' "$APACHE_CONF"
+
+  ok "Apache AllowOverride enabled"
+else
+  warn "Apache config not found at $APACHE_CONF - you may need to manually set AllowOverride All"
+fi
+
 sudo systemctl restart apache2 2>/dev/null || sudo systemctl restart httpd 2>/dev/null || true
 
 ok "Apache configured for captive portal"
