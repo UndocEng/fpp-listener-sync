@@ -100,7 +100,21 @@ if (isset($src["seconds_played"])) $sec_played = floatval($src["seconds_played"]
 $pos_ms = intval($sec_played * 1000.0);
 
 
-$mp3_url = ($base !== "") ? ("/music/" . rawurlencode($base) . ".mp3") : "";
+// Check for audio file - prefer MP3, fall back to M4A, then other formats
+$audio_url = "";
+if ($base !== "") {
+  $music_dir = "/home/fpp/media/music";
+  $formats = ["mp3", "m4a", "mp4", "aac", "ogg", "wav"];
+
+  foreach ($formats as $ext) {
+    if (file_exists("$music_dir/$base.$ext")) {
+      $audio_url = "/music/" . rawurlencode($base) . ".$ext";
+      break;
+    }
+  }
+}
+
+$mp3_url = $audio_url; // Keep variable name for compatibility
 
 
 echo json_encode([

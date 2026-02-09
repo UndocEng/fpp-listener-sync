@@ -188,12 +188,20 @@ sudo sysctl -w net.ipv4.ip_forward=0 >/dev/null
 echo "net.ipv4.ip_forward=0" | sudo tee /etc/sysctl.d/99-no-forward.conf >/dev/null
 
 if command -v iptables >/dev/null 2>&1; then
+  # Prevent forwarding from/to wlan1 (blocks internet access)
   sudo iptables -C FORWARD -i wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -i wlan1 -j DROP
-
   sudo iptables -C FORWARD -o wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -o wlan1 -j DROP
+
+  # Device isolation - prevent visitors from accessing each other
+  # Block traffic between clients (192.168.50.10-250) but allow traffic to server (192.168.50.1)
+  sudo iptables -C INPUT -i wlan1 -m iprange --src-range 192.168.50.10-192.168.50.250 -d 192.168.50.1 -j ACCEPT 2>/dev/null || \
+    sudo iptables -I INPUT -i wlan1 -m iprange --src-range 192.168.50.10-192.168.50.250 -d 192.168.50.1 -j ACCEPT
+
+  sudo iptables -C INPUT -i wlan1 -s 192.168.50.0/24 -j DROP 2>/dev/null || \
+    sudo iptables -A INPUT -i wlan1 -s 192.168.50.0/24 -j DROP
 fi
 
-ok "IP forwarding disabled, networks isolated"
+ok "IP forwarding disabled, devices isolated"
 
 echo ""
 

@@ -37,9 +37,37 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 
 - Apache + PHP (included in standard FPP images)
 
-- `.fseq` and `.mp3` files must share the same base filename (e.g. `MySong.fseq` and `MySong.mp3`)
+- `.fseq` and audio files must share the same base filename (e.g. `MySong.fseq` and `MySong.mp3`)
+
+- Supported audio formats: MP3, M4A, AAC, OGG, WAV (MP3 preferred for best compatibility)
 
 
+
+## Getting Started
+
+### 1. Enable SSH on FPP
+
+1. Open FPP web interface (usually `http://fpp.local` or your Pi's IP)
+2. Navigate to **Status/Control** → **FPP Settings**
+3. Scroll to **SSH Access** and enable it
+4. Click **Save**
+
+### 2. Connect via SSH
+
+**From Windows:**
+- Use PuTTY or Windows Terminal
+- Host: `fpp.local` or your FPP IP address
+- Port: 22
+
+**From Mac/Linux:**
+```bash
+ssh fpp@fpp.local
+# Or use IP: ssh fpp@192.168.x.x
+```
+
+**Default credentials:**
+- Username: `fpp`
+- Password: `falcon`
 
 ## Install
 
