@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Printable QR Code Sign</title>
+    <style>
+        @media screen {
+            body {
+                font-family: system-ui, sans-serif;
+                background: #f5f5f5;
+                padding: 20px;
+            }
+            .no-print {
+                max-width: 800px;
+                margin: 0 auto 20px;
+                background: white;
+                padding: 20px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            .no-print h1 {
+                color: #00e5ff;
+                margin-top: 0;
+            }
+            .no-print button {
+                background: #00e5ff;
+                color: #111;
+                border: none;
+                padding: 12px 24px;
+                font-size: 16px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-weight: 600;
+                margin: 10px 10px 10px 0;
+            }
+            .no-print button:hover {
+                background: #00bcd4;
+            }
+        }
+
+        @page {
+            size: letter portrait;
+            margin: 0.5in;
+        }
+
+        @media print {
+            .no-print {
+                display: none;
+            }
+            body {
+                margin: 0;
+                padding: 0;
+            }
+        }
+
+        .sign {
+            max-width: 7.5in;
+            margin: 0 auto;
+            padding: 40px;
+            text-align: center;
+            font-family: 'Arial', sans-serif;
+            background: white;
+        }
+
+        .sign h1 {
+            font-size: 48pt;
+            margin: 0 0 10px 0;
+            color: #000;
+            font-weight: bold;
+        }
+
+        .sign .subtitle {
+            font-size: 24pt;
+            color: #333;
+            margin: 0 0 30px 0;
+        }
+
+        .sign .qr-container {
+            margin: 30px 0;
+        }
+
+        .sign #qrcode canvas {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .sign .instructions {
+            font-size: 18pt;
+            color: #000;
+            margin: 30px 0;
+            line-height: 1.6;
+        }
+
+        .sign .step {
+            margin: 15px 0;
+            font-weight: 600;
+        }
+
+        .sign .step-number {
+            display: inline-block;
+            width: 36px;
+            height: 36px;
+            background: #00e5ff;
+            color: #000;
+            border-radius: 50%;
+            line-height: 36px;
+            text-align: center;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .sign .footer {
+            margin-top: 30px;
+            font-size: 14pt;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print">
+        <h1>🎵 Printable QR Code Sign</h1>
+        <p>This page will generate a printable sign with QR code for visitors to scan and access the show audio.</p>
+
+        <div style="margin: 20px 0;">
+            <label style="display: block; margin-bottom: 5px; font-weight: 600;">Show Name (optional):</label>
+            <input type="text" id="showName" placeholder="e.g., Holiday Lights 2026"
+                   style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+        </div>
+
+        <button onclick="generateQR()">Generate QR Code</button>
+        <button onclick="window.print()">Print Sign</button>
+
+        <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #00e5ff;">
+            <strong>💡 Printing Tips:</strong><br>
+            • Use cardstock or thick paper for durability<br>
+            • Consider laminating for outdoor use<br>
+            • Make multiple copies to place around your display<br>
+            • Ensure QR code is at least 4 inches square for easy scanning
+        </div>
+    </div>
+
+    <div class="sign">
+        <h1>🎵 SHOW AUDIO</h1>
+        <div class="subtitle" id="showNameDisplay"></div>
+
+        <div class="qr-container">
+            <div id="qrcode"></div>
+        </div>
+
+        <div class="instructions">
+            <div class="step">
+                <span class="step-number">1</span>
+                Scan this QR code with your phone camera
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Tap to join the Wi-Fi network
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Tap "Enable Audio" when page opens
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Keep page open during the show!
+            </div>
+        </div>
+
+        <div class="footer">
+            Free Wi-Fi • No app required • Works on all phones
+        </div>
+    </div>
+
+    <script src="qrcode.min.js"></script>
+    <script>
+        // Generate QR code on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            generateQR();
+            updateShowName();
+        });
+
+        // Update show name when changed
+        document.getElementById('showName').addEventListener('input', updateShowName);
+
+        function updateShowName() {
+            const showName = document.getElementById('showName').value;
+            const display = document.getElementById('showNameDisplay');
+            display.textContent = showName || '';
+            display.style.display = showName ? 'block' : 'none';
+        }
+
+        function generateQR() {
+            // Clear previous QR code
+            document.getElementById('qrcode').innerHTML = '';
+
+            // Wi-Fi QR code string for SHOW_AUDIO (open network)
+            const wifiString = 'WIFI:T:nopass;S:SHOW_AUDIO;P:;;';
+
+            // Generate QR code (512x512 for printing)
+            QRCode.toCanvas(wifiString, {
+                width: 512,
+                margin: 2,
+                color: {
+                    dark: '#000000',
+                    light: '#ffffff'
+                }
+            }, function(error, canvas) {
+                if (error) {
+                    console.error(error);
+                    alert('Error generating QR code');
+                    return;
+                }
+                document.getElementById('qrcode').appendChild(canvas);
+            });
+        }
+    </script>
+</body>
+</html>

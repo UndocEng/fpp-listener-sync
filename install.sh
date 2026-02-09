@@ -65,7 +65,19 @@ sudo cp "$SCRIPT_DIR/www/listen/status.php" "$LISTEN_WEB/status.php"
 
 sudo cp "$SCRIPT_DIR/www/listen/logo.png" "$LISTEN_WEB/logo.png"
 
+sudo cp "$SCRIPT_DIR/www/qrcode.html" "$APACHE_ROOT/qrcode.html"
+
+sudo cp "$SCRIPT_DIR/www/print-sign.html" "$APACHE_ROOT/print-sign.html"
+
+sudo cp "$SCRIPT_DIR/www/qrcode.min.js" "$APACHE_ROOT/qrcode.min.js"
+
 sudo chmod -R a+rX "$LISTEN_WEB"
+
+sudo chmod a+r "$APACHE_ROOT/qrcode.html"
+
+sudo chmod a+r "$APACHE_ROOT/print-sign.html"
+
+sudo chmod a+r "$APACHE_ROOT/qrcode.min.js"
 
 ok "Web files deployed to $LISTEN_WEB"
 
@@ -74,6 +86,14 @@ info "Creating Apache symlinks..."
 sudo rm -rf "$APACHE_ROOT/listen"
 
 sudo ln -s "$LISTEN_WEB" "$APACHE_ROOT/listen"
+
+info "Deploying captive portal redirect..."
+
+sudo cp "$SCRIPT_DIR/www/.htaccess" "$APACHE_ROOT/.htaccess"
+
+sudo chmod a+r "$APACHE_ROOT/.htaccess"
+
+ok "Captive portal redirect configured"
 
 if [ ! -L "$APACHE_ROOT/music" ] && [ ! -d "$APACHE_ROOT/music" ]; then
 
@@ -176,6 +196,12 @@ echo "  SSID:     SHOW_AUDIO (open)"
 echo "  Page:     http://192.168.50.1/listen/"
 
 echo "  DNS:      http://listen.local/listen/"
+
+echo ""
+
+echo "  QR Code:  http://192.168.50.1/qrcode.html"
+
+echo "  Print:    http://192.168.50.1/print-sign.html"
 
 echo "========================================="
 
