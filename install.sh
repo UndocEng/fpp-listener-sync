@@ -178,7 +178,16 @@ sudo systemctl daemon-reload
 
 sudo systemctl enable dnsmasq
 
-sudo systemctl restart dnsmasq
+# Stop dnsmasq first to avoid conflicts
+sudo systemctl stop dnsmasq 2>/dev/null || true
+
+# Start dnsmasq with timeout to prevent hanging
+timeout 10 sudo systemctl start dnsmasq || {
+  warn "dnsmasq start timed out, attempting recovery..."
+  sudo pkill -9 dnsmasq 2>/dev/null || true
+  sleep 2
+  sudo systemctl start dnsmasq || warn "dnsmasq may need manual intervention"
+}
 
 ok "dnsmasq running (DHCP on wlan1)"
 
