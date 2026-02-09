@@ -37,7 +37,9 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 
 - Apache + PHP (included in standard FPP images)
 
-- `.fseq` and `.mp3` files must share the same base filename (e.g. `MySong.fseq` and `MySong.mp3`)
+- `.fseq` and audio files must share the same base filename (e.g. `MySong.fseq` and `MySong.mp3`)
+
+- Supported audio formats: MP3, M4A, AAC, OGG, WAV (MP3 preferred for best compatibility)
 
 
 
