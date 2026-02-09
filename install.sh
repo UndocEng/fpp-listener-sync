@@ -69,11 +69,15 @@ sudo cp "$SCRIPT_DIR/www/qrcode.html" "$APACHE_ROOT/qrcode.html"
 
 sudo cp "$SCRIPT_DIR/www/print-sign.html" "$APACHE_ROOT/print-sign.html"
 
+sudo cp "$SCRIPT_DIR/www/qrcode.min.js" "$APACHE_ROOT/qrcode.min.js"
+
 sudo chmod -R a+rX "$LISTEN_WEB"
 
 sudo chmod a+r "$APACHE_ROOT/qrcode.html"
 
 sudo chmod a+r "$APACHE_ROOT/print-sign.html"
+
+sudo chmod a+r "$APACHE_ROOT/qrcode.min.js"
 
 ok "Web files deployed to $LISTEN_WEB"
 
