@@ -95,6 +95,18 @@ sudo chmod a+r "$APACHE_ROOT/.htaccess"
 
 ok "Captive portal redirect configured"
 
+info "Enabling Apache mod_rewrite and AllowOverride..."
+
+sudo a2enmod rewrite 2>/dev/null || ok "mod_rewrite already enabled"
+
+sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/apache2/conf-available/listener.conf 2>/dev/null || sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/httpd/conf.d/listener.conf 2>/dev/null || true
+
+sudo a2enconf listener 2>/dev/null || true
+
+sudo systemctl restart apache2 2>/dev/null || sudo systemctl restart httpd 2>/dev/null || true
+
+ok "Apache configured for captive portal"
+
 if [ ! -L "$APACHE_ROOT/music" ] && [ ! -d "$APACHE_ROOT/music" ]; then
 
   sudo ln -s "$MUSIC_DIR" "$APACHE_ROOT/music"

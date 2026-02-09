@@ -1,9 +1,14 @@
-# Captive portal redirect - redirect root to /listen/
+# Captive portal redirect - lock down public network access
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    # Redirect root to /listen/
-    RewriteRule ^$ /listen/ [R=302,L]
+    # SECURITY: Block all access to FPP admin from public network (192.168.50.x)
+    # Only allow /listen/ and /music/ paths
+    RewriteCond %{HTTP_HOST} ^192\.168\.50\.1$ [OR]
+    RewriteCond %{HTTP_HOST} ^listen\.local$ [NC]
+    RewriteCond %{REQUEST_URI} !^/listen/ [NC]
+    RewriteCond %{REQUEST_URI} !^/music/ [NC]
+    RewriteRule .* /listen/ [R=302,L]
 
     # Redirect common captive portal detection URLs to /listen/
     RewriteCond %{REQUEST_URI} ^/(generate_204|gen_204|hotspot-detect\.html|success\.txt|connecttest\.txt|canonical\.html)$ [NC]
