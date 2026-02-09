@@ -85,7 +85,17 @@ sudo ./uninstall.sh
 
 ## Visitor Instructions
 
+### Option 1: QR Code (Easiest!)
 
+1. Scan the QR code (generate at **http://192.168.50.1/qrcode.html**)
+
+2. Tap to join **SHOW_AUDIO** Wi-Fi
+
+3. Tap the captive portal popup
+
+4. Tap **Enable Audio**
+
+### Option 2: Manual Connection
 
 1. Join Wi-Fi: **SHOW_AUDIO** (no password)
 
@@ -96,6 +106,20 @@ sudo ./uninstall.sh
 4. Audio plays synced to the show
 
 
+
+## QR Code Setup
+
+After installation, generate a Wi-Fi QR code for easy visitor access:
+
+1. Open **http://192.168.50.1/qrcode.html** on your phone/computer
+
+2. Click **Generate QR Code**
+
+3. Click **Download QR Code**
+
+4. Print and display the QR code at your show entrance
+
+Visitors simply scan the code to automatically join the Wi-Fi and access the audio page!
 
 ## Architecture
 
@@ -108,6 +132,8 @@ sudo ./uninstall.sh
 - Gentle playback rate nudging (0.997x-1.003x) keeps sync under 100ms
 
 - Hard seek only when error exceeds 1 second
+
+- Captive portal automatically redirects visitors to the audio page
 
 - Listener network is fully isolated from show network (no IP forwarding)
 

@@ -49,6 +49,12 @@ sudo rm -rf /opt/fpp/www/listen
 
 sudo rm -f /opt/fpp/www/music
 
+sudo rm -f /opt/fpp/www/.htaccess
+
+sudo rm -f /opt/fpp/www/qrcode.html
+
+sudo rm -f /opt/fpp/www/print-sign.html
+
 sudo rm -rf /home/fpp/media/www/listen
 
 sudo rm -rf /home/fpp/listen-sync
