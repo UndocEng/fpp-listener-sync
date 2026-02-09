@@ -2,15 +2,15 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    # SECURITY: Block all access to FPP admin from public network (192.168.50.x)
-    # Only allow /listen/ and /music/ paths
+    # SECURITY: Block ALL access to FPP from public network (192.168.50.x and listen.local)
+    # Only allow /listen/ and /music/ directories
     RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
     RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
-    RewriteCond %{REQUEST_URI} !^/listen(/.*)?$ [NC]
-    RewriteCond %{REQUEST_URI} !^/music(/.*)?$ [NC]
-    RewriteRule ^(.*)$ /listen/ [R=302,L]
+    RewriteCond %{REQUEST_URI} !^/listen/ [NC]
+    RewriteCond %{REQUEST_URI} !^/music/ [NC]
+    RewriteRule ^ /listen/ [R=302,L]
 
     # Redirect common captive portal detection URLs to /listen/
     RewriteCond %{REQUEST_URI} ^/(generate_204|gen_204|hotspot-detect\.html|success\.txt|connecttest\.txt|canonical\.html)$ [NC]
-    RewriteRule .* /listen/ [R=302,L]
+    RewriteRule ^ /listen/ [R=302,L]
 </IfModule>

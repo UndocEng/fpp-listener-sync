@@ -70,6 +70,8 @@
 
   <div class="debug-toggle"><label><input type="checkbox" id="debugCheck" /> Show Debug Data</label></div>
 
+  <div class="small" style="text-align: center; margin-top: 16px; opacity: 0.5;">FPP Listener Sync <span id="version">v1.0.0</span></div>
+
   <div id="debugBox" class="box hidden">
 
     <div><b>Poll:</b> <span id="poll">not started</span></div>
@@ -109,6 +111,9 @@ async function pollOnce(){if(!enabled)return;const t0=Date.now();try{const url=`
 async function safePlay(){try{const p=audio.play();if(p&&typeof p.catch==='function'){await p;}playErrEl.textContent="";}catch(e){playErrEl.textContent="Play blocked: "+(e?.message||e);}}
 
 async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;return;}const nowMs=Date.now();let serverMs=Number(msg.server_ms);if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){serverMs=nowMs;}const smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);const targetSec=smoothPosMs/1000.0;const localSec=audio.currentTime||0;const errMs=(targetSec-localSec)*1000.0;localEl.textContent=Math.round(localSec*1000);errEl.textContent=Math.round(errMs);if(audio.paused)await safePlay();if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){audio.playbackRate=1.0;return;}if(Math.abs(errMs)>1000){audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));audio.playbackRate=1.0;return;}if(Math.abs(errMs)<60){audio.playbackRate=1.0;}else{audio.playbackRate=clamp(1.0+(errMs*0.000002),0.997,1.003);}}
+
+// Fetch and display version
+fetch('/listen/version.php').then(r=>r.text()).then(v=>document.getElementById('version').textContent='v'+v.trim()).catch(()=>{});
 
 </script>
 
