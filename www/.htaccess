@@ -1,8 +1,10 @@
-# Captive portal redirect - redirect root to /listen/
+# Captive portal redirect - only redirect captive portal detection URLs
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    # Redirect root to /listen/
+    # Redirect listen.local root to /listen/ (for easy access)
+    RewriteCond %{HTTP_HOST} ^listen\.local$ [NC]
+    RewriteCond %{REQUEST_URI} ^/$
     RewriteRule ^$ /listen/ [R=302,L]
 
     # Redirect common captive portal detection URLs to /listen/
