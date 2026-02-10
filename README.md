@@ -93,15 +93,44 @@ sudo ./install.sh
 
 ## Update
 
-```bash
+To update to the latest version:
 
+```bash
+cd /home/fpp/fpp-listener-sync
+git pull
+sudo ./install.sh
+```
+
+The installer will:
+- Update all web files to the latest version
+- Update system configurations if needed
+- Restart services automatically
+- Run self-tests to verify everything works
+
+### Check Current Version
+
+View your installed version at: `http://192.168.50.1/listen/` (shown at bottom of page)
+
+### Troubleshooting Updates
+
+If `git pull` shows conflicts or errors:
+
+```bash
 cd /home/fpp/fpp-listener-sync
 
-git pull
+# Discard local changes and reset to latest
+git fetch origin
+git reset --hard origin/Update_uninstall.sh
 
+# Run installer
 sudo ./install.sh
-
 ```
+
+### After Update
+
+- Check that SHOW_AUDIO WiFi is broadcasting
+- Verify version number updated on listening page
+- Test that audio sync still works
 
 ## Using on Remote FPPs
 
