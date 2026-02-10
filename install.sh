@@ -165,7 +165,7 @@ ok "Listener-sync configs deployed"
 info "Configuring wlan1 static IP..."
 
 # Check if wlan1 exists
-if ! ip link show wlan1 &>/dev/null; then
+if ! ip link show wlan1 >/dev/null 2>&1; then
   echo ""
   printf '%b\n' "${RED}[ERROR] wlan1 interface not found!${NC}"
   echo ""
