@@ -27,8 +27,13 @@
     RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
     RewriteRule ^ /listen/ [R=302,L]
 
+    # Allow full access from localhost, fpp.local, and private IPs (for admin/self-test)
+    RewriteCond %{HTTP_HOST} ^(localhost|127\.0\.0\.1|fpp\.local|.*\.local)(:[0-9]+)?$ [NC,OR]
+    RewriteCond %{HTTP_HOST} ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.(?!50\.))[0-9.]+$ [NC]
+    RewriteRule ^ - [L]
+
     # CATCH-ALL: Any other domain (google.com, facebook.com, etc.) redirect to listen page
-    # This catches all DNS wildcard traffic
+    # This catches all DNS wildcard traffic from public AP
     RewriteCond %{HTTP_HOST} !^192\.168\.50\.1(:[0-9]+)?$ [NC]
     RewriteCond %{HTTP_HOST} !^listen\.local(:[0-9]+)?$ [NC]
     RewriteRule ^ http://listen.local/listen/ [R=302,L]
