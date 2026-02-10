@@ -202,9 +202,9 @@ audio.playbackRate=1.0;
 return;
 }
 
-// Hard seek only if REALLY broken and persistently off
-const HARD_SEEK_MS=1200;
-const HARD_SEEK_STRIKES=3;
+// Hard seek if persistently way off (reduced threshold for light show timing)
+const HARD_SEEK_MS=800;
+const HARD_SEEK_STRIKES=2;
 if(Math.abs(errMs)>HARD_SEEK_MS){
 hardSeekStrike++;
 if(hardSeekStrike>=HARD_SEEK_STRIKES){
@@ -220,28 +220,28 @@ hardSeekStrike=0;
 }
 
 // PI controller for normal drift - NO seeking
-const DEAD=40;
-const MAX_RATE=1.08;
-const MIN_RATE=0.92;
+const DEAD=100; // Wider dead zone for stability
+const MAX_RATE=1.15; // ±15% for faster convergence
+const MIN_RATE=0.85;
 if(Math.abs(errMs)<=DEAD){
 audio.playbackRate=1.0;
-integralError*=0.5; // Decay integral rather than hard reset
+integralError*=0.5;
 lastPlaybackRate=1.0;
 return;
 }
 
 // PI with anti-windup
 integralError+=errMs;
-integralError=Math.max(-8000,Math.min(8000,integralError));
+integralError=Math.max(-10000,Math.min(10000,integralError));
 
-// Tuned gains for stable timebase
-const Kp2=0.0008;
-const Ki2=0.00001;
+// More aggressive gains for light show timing
+const Kp2=0.002; // 2.5x more aggressive
+const Ki2=0.00003; // 3x more aggressive
 const adjustment=(Kp2*errMs)+(Ki2*integralError);
 const targetRate=clamp(1.0+adjustment,MIN_RATE,MAX_RATE);
 
-// Smooth rate changes (less aggressive to prevent audible warble)
-const SMOOTH=0.35;
+// Faster response for light show sync
+const SMOOTH=0.7; // 70% toward target (was 35%)
 const smoothed=lastPlaybackRate+SMOOTH*(targetRate-lastPlaybackRate);
 audio.playbackRate=smoothed;
 lastPlaybackRate=smoothed;
