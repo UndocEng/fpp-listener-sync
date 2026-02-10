@@ -13,13 +13,11 @@ APACHE_ROOT="/opt/fpp/www"
 
 MUSIC_DIR="/home/fpp/media/music"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 info()  { printf '%b\n' "${CYAN}[INFO]${NC} $1"; }
 
 ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
-
-warn()  { printf '%b\n' "${YELLOW}[WARN]${NC} $1"; }
 
 fail()  { printf '%b\n' "${RED}[FAIL]${NC} $1"; exit 1; }
 
@@ -166,30 +164,61 @@ ok "Listener-sync configs deployed"
 
 info "Configuring wlan1 static IP..."
 
-sudo cp "$SCRIPT_DIR/config/20-listener-ap.network" /etc/systemd/network/20-listener-ap.network
+# Configure wlan1 using ip commands instead of systemd-networkd
+# This avoids conflicts with FPP's existing network management
+sudo ip addr flush dev wlan1 2>/dev/null || true
+sudo ip addr add 192.168.50.1/24 dev wlan1 2>/dev/null || true
+sudo ip link set wlan1 up 2>/dev/null || true
 
-sudo systemctl enable systemd-networkd
-
-sudo systemctl restart systemd-networkd
-
-# Wait for wlan1 to get IP address (max 10 seconds)
-info "Waiting for wlan1 to be ready..."
+# Create startup script to configure wlan1 on boot
+cat > /tmp/wlan1-setup.sh << 'EOF'
+#!/bin/bash
+# Wait for wlan1 to exist
 for i in {1..10}; do
-  IP=$(ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}')
-  if [ "$IP" = "192.168.50.1/24" ]; then
+  if ip link show wlan1 &>/dev/null; then
     break
   fi
   sleep 1
 done
 
-[ "$IP" = "192.168.50.1/24" ] && ok "wlan1 configured as 192.168.50.1" || warn "wlan1 may not be fully ready ($IP)"
+# Configure wlan1 IP
+ip addr flush dev wlan1 2>/dev/null || true
+ip addr add 192.168.50.1/24 dev wlan1 2>/dev/null || true
+ip link set wlan1 up 2>/dev/null || true
+EOF
+
+sudo mv /tmp/wlan1-setup.sh /usr/local/bin/wlan1-setup.sh
+sudo chmod +x /usr/local/bin/wlan1-setup.sh
+
+# Create systemd service to run wlan1-setup on boot
+cat > /tmp/wlan1-setup.service << 'EOF'
+[Unit]
+Description=Configure wlan1 for FPP Listener
+After=network.target
+Before=listener-ap.service dnsmasq.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wlan1-setup.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo mv /tmp/wlan1-setup.service /etc/systemd/system/wlan1-setup.service
+sudo systemctl daemon-reload
+sudo systemctl enable wlan1-setup.service
+
+ok "wlan1 configured as 192.168.50.1"
 
 info "Configuring dnsmasq..."
 
-# Stop any running dnsmasq instances first
-sudo systemctl stop dnsmasq 2>/dev/null || true
-sudo pkill -9 dnsmasq 2>/dev/null || true
-sleep 1
+# Backup original dnsmasq.conf if it exists and hasn't been backed up
+if [ -f /etc/dnsmasq.conf ] && [ ! -f /etc/dnsmasq.conf.listener-backup ]; then
+  sudo cp /etc/dnsmasq.conf /etc/dnsmasq.conf.listener-backup
+  info "Backed up original dnsmasq.conf"
+fi
 
 sudo cp "$SCRIPT_DIR/config/dnsmasq.conf" /etc/dnsmasq.conf
 
@@ -199,27 +228,21 @@ sudo cp "$SCRIPT_DIR/config/dnsmasq-override.conf" /etc/systemd/system/dnsmasq.s
 
 sudo systemctl daemon-reload
 
-# Enable without starting (--now is not used)
-sudo systemctl enable dnsmasq 2>/dev/null || true
+# Stop dnsmasq first to avoid conflicts
+info "Restarting dnsmasq..."
+sudo systemctl stop dnsmasq 2>/dev/null || true
+sudo pkill -9 dnsmasq 2>/dev/null || true
+sleep 2
 
-# Start dnsmasq with explicit timeout and non-blocking
-info "Starting dnsmasq (may take a few seconds)..."
-sudo systemctl start dnsmasq --no-block 2>/dev/null || true
+sudo systemctl enable dnsmasq
+sudo systemctl start dnsmasq 2>/dev/null || warn "dnsmasq may need manual start - check 'systemctl status dnsmasq'"
 
-# Wait for dnsmasq to actually start (max 10 seconds)
-DNSMASQ_STARTED=0
-for i in {1..10}; do
-  if systemctl is-active --quiet dnsmasq; then
-    DNSMASQ_STARTED=1
-    break
-  fi
-  sleep 1
-done
-
-if [ $DNSMASQ_STARTED -eq 1 ]; then
+# Verify dnsmasq started
+sleep 2
+if systemctl is-active --quiet dnsmasq; then
   ok "dnsmasq running (DHCP on wlan1)"
 else
-  warn "dnsmasq may not have started properly - check 'systemctl status dnsmasq'"
+  warn "dnsmasq may not be running - check 'systemctl status dnsmasq'"
 fi
 
 info "Configuring listener AP service..."
