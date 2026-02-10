@@ -164,15 +164,61 @@ ok "Listener-sync configs deployed"
 
 info "Configuring wlan1 static IP..."
 
-sudo cp "$SCRIPT_DIR/config/20-listener-ap.network" /etc/systemd/network/20-listener-ap.network
+# Configure wlan1 using ip commands instead of systemd-networkd
+# This avoids conflicts with FPP's existing network management
+sudo ip addr flush dev wlan1 2>/dev/null || true
+sudo ip addr add 192.168.50.1/24 dev wlan1 2>/dev/null || true
+sudo ip link set wlan1 up 2>/dev/null || true
 
-sudo systemctl enable systemd-networkd
+# Create startup script to configure wlan1 on boot
+cat > /tmp/wlan1-setup.sh << 'EOF'
+#!/bin/bash
+# Wait for wlan1 to exist
+for i in {1..10}; do
+  if ip link show wlan1 &>/dev/null; then
+    break
+  fi
+  sleep 1
+done
 
-sudo systemctl restart systemd-networkd
+# Configure wlan1 IP
+ip addr flush dev wlan1 2>/dev/null || true
+ip addr add 192.168.50.1/24 dev wlan1 2>/dev/null || true
+ip link set wlan1 up 2>/dev/null || true
+EOF
+
+sudo mv /tmp/wlan1-setup.sh /usr/local/bin/wlan1-setup.sh
+sudo chmod +x /usr/local/bin/wlan1-setup.sh
+
+# Create systemd service to run wlan1-setup on boot
+cat > /tmp/wlan1-setup.service << 'EOF'
+[Unit]
+Description=Configure wlan1 for FPP Listener
+After=network.target
+Before=listener-ap.service dnsmasq.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wlan1-setup.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo mv /tmp/wlan1-setup.service /etc/systemd/system/wlan1-setup.service
+sudo systemctl daemon-reload
+sudo systemctl enable wlan1-setup.service
 
 ok "wlan1 configured as 192.168.50.1"
 
 info "Configuring dnsmasq..."
+
+# Backup original dnsmasq.conf if it exists and hasn't been backed up
+if [ -f /etc/dnsmasq.conf ] && [ ! -f /etc/dnsmasq.conf.listener-backup ]; then
+  sudo cp /etc/dnsmasq.conf /etc/dnsmasq.conf.listener-backup
+  info "Backed up original dnsmasq.conf"
+fi
 
 sudo cp "$SCRIPT_DIR/config/dnsmasq.conf" /etc/dnsmasq.conf
 
@@ -182,20 +228,22 @@ sudo cp "$SCRIPT_DIR/config/dnsmasq-override.conf" /etc/systemd/system/dnsmasq.s
 
 sudo systemctl daemon-reload
 
-sudo systemctl enable dnsmasq
-
 # Stop dnsmasq first to avoid conflicts
+info "Restarting dnsmasq..."
 sudo systemctl stop dnsmasq 2>/dev/null || true
+sudo pkill -9 dnsmasq 2>/dev/null || true
+sleep 2
 
-# Start dnsmasq with timeout to prevent hanging
-timeout 10 sudo systemctl start dnsmasq || {
-  warn "dnsmasq start timed out, attempting recovery..."
-  sudo pkill -9 dnsmasq 2>/dev/null || true
-  sleep 2
-  sudo systemctl start dnsmasq || warn "dnsmasq may need manual intervention"
-}
+sudo systemctl enable dnsmasq
+sudo systemctl start dnsmasq 2>/dev/null || warn "dnsmasq may need manual start - check 'systemctl status dnsmasq'"
 
-ok "dnsmasq running (DHCP on wlan1)"
+# Verify dnsmasq started
+sleep 2
+if systemctl is-active --quiet dnsmasq; then
+  ok "dnsmasq running (DHCP on wlan1)"
+else
+  warn "dnsmasq may not be running - check 'systemctl status dnsmasq'"
+fi
 
 info "Configuring listener AP service..."
 
