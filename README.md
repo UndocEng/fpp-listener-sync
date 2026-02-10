@@ -19,7 +19,7 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 
 2. A USB Wi-Fi adapter broadcasts an open AP (`SHOW_AUDIO`)
 
-3. Visitors join the AP and open `http://192.168.50.1/listen/`
+3. Visitors join the AP and open **`listen.local/listen/`** (or `192.168.50.1/listen/`)
 
 4. The browser downloads the MP3 and syncs playback to FPP's position
 
@@ -109,7 +109,7 @@ The installer will:
 
 ### Check Current Version
 
-View your installed version at: `http://192.168.50.1/listen/` (shown at bottom of page)
+View your installed version at: **`listen.local/listen/`** or `192.168.50.1/listen/` (shown at bottom of page)
 
 ### Troubleshooting Updates
 
@@ -174,7 +174,15 @@ sudo ./uninstall.sh
 
 ```
 
+## Access URLs
 
+After connecting to the **SHOW_AUDIO** WiFi network:
+
+- **Listening Page**: `listen.local/listen/` (easy to remember!) or `192.168.50.1/listen/`
+- **QR Code Generator**: `listen.local/qrcode.html` or `192.168.50.1/qrcode.html`
+- **Print Sign**: `listen.local/print-sign.html` or `192.168.50.1/print-sign.html`
+
+💡 **Tip**: Share **`listen.local/listen/`** with visitors — it's much easier to remember than an IP address!
 
 ## Visitor Instructions
 
@@ -192,7 +200,7 @@ sudo ./uninstall.sh
 
 1. Join Wi-Fi: **SHOW_AUDIO** (no password)
 
-2. Open: **http://192.168.50.1/listen/**
+2. Open: **`listen.local/listen/`** (or `192.168.50.1/listen/`)
 
 3. Tap: **Enable Audio**
 
