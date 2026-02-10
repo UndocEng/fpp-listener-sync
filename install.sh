@@ -164,6 +164,27 @@ ok "Listener-sync configs deployed"
 
 info "Configuring wlan1 static IP..."
 
+# Check if wlan1 exists
+if ! ip link show wlan1 &>/dev/null; then
+  echo ""
+  printf '%b\n' "${RED}[ERROR] wlan1 interface not found!${NC}"
+  echo ""
+  echo "Available network interfaces:"
+  ip link show | grep -E '^[0-9]+:' | awk '{print "  - " $2}' | sed 's/:$//'
+  echo ""
+  echo "Troubleshooting:"
+  echo "  1. Make sure USB WiFi adapter is plugged in"
+  echo "  2. Run 'lsusb' to verify adapter is detected"
+  echo "  3. Run 'dmesg | tail -20' to check for driver errors"
+  echo "  4. Some adapters may appear as wlan0, wlan2, etc."
+  echo ""
+  echo "If your USB WiFi has a different name, you'll need to:"
+  echo "  - Update config files to use the correct interface name"
+  echo "  - Or create a udev rule to rename it to wlan1"
+  echo ""
+  fail "Cannot continue without wlan1 interface"
+fi
+
 # Configure wlan1 using ip commands instead of systemd-networkd
 # This avoids conflicts with FPP's existing network management
 sudo ip addr flush dev wlan1 2>/dev/null || true

@@ -54,9 +54,9 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 ### 1. Enable SSH on FPP
 
 1. Open FPP web interface (usually `http://fpp.local` or your Pi's IP)
-2. Navigate to **Status/Control** → **FPP Settings**
-3. Scroll to **SSH Access** and enable it
-4. Click **Save**
+2. Click the **Help** menu (top right)
+3. Select **SSH Access**
+4. Enable SSH and click **Save**
 
 ### 2. Connect via SSH
 
