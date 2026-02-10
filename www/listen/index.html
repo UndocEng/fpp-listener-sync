@@ -86,13 +86,17 @@
 
     <div><b>Error:</b> <span id="err">-</span> ms</div>
 
+    <div><b>Avg Error (2s):</b> <span id="avgErr2s">-</span> ms</div>
+
+    <div><b>Avg Error (all):</b> <span id="avgErrAll">-</span> ms</div>
+
   </div>
 
   <audio id="audio" preload="auto" playsinline></audio>
 
 <script>
 
-const enableBtn=document.getElementById('enableBtn'),audio=document.getElementById('audio'),idleMsg=document.getElementById('idleMsg'),nowPlaying=document.getElementById('nowPlaying'),trackName=document.getElementById('trackName'),pollEl=document.getElementById('poll'),fetchErrEl=document.getElementById('fetchErr'),playErrEl=document.getElementById('playErr'),seqEl=document.getElementById('seq'),stateEl=document.getElementById('state'),targetEl=document.getElementById('target'),localEl=document.getElementById('local'),errEl=document.getElementById('err'),debugCheck=document.getElementById('debugCheck'),debugBox=document.getElementById('debugBox');
+const enableBtn=document.getElementById('enableBtn'),audio=document.getElementById('audio'),idleMsg=document.getElementById('idleMsg'),nowPlaying=document.getElementById('nowPlaying'),trackName=document.getElementById('trackName'),pollEl=document.getElementById('poll'),fetchErrEl=document.getElementById('fetchErr'),playErrEl=document.getElementById('playErr'),seqEl=document.getElementById('seq'),stateEl=document.getElementById('state'),targetEl=document.getElementById('target'),localEl=document.getElementById('local'),errEl=document.getElementById('err'),avgErr2sEl=document.getElementById('avgErr2s'),avgErrAllEl=document.getElementById('avgErrAll'),debugCheck=document.getElementById('debugCheck'),debugBox=document.getElementById('debugBox');
 
 let enabled=false,currentBase="",pollTimer=null,haveMetadata=false;
 
@@ -114,7 +118,12 @@ async function safePlay(){try{const p=audio.play();if(p&&typeof p.catch==='funct
 let posHistory=[];
 const POS_HISTORY_SIZE=4;
 
-async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();posHistory=[];}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;posHistory=[];return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;posHistory=[];return;}const nowMs=Date.now();let serverMs=Number(msg.server_ms);if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){serverMs=nowMs;}const smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);posHistory.push(smoothPosMs);if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;const targetSec=avgPosMs/1000.0;const localSec=audio.currentTime||0;const errMs=(targetSec-localSec)*1000.0;localEl.textContent=Math.round(localSec*1000);errEl.textContent=Math.round(errMs);if(audio.paused)await safePlay();if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){audio.playbackRate=1.0;return;}if(Math.abs(errMs)>2000){audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));audio.playbackRate=1.0;posHistory=[];return;}if(Math.abs(errMs)<150){audio.playbackRate=1.0;}else if(Math.abs(errMs)<500){audio.playbackRate=clamp(1.0+(errMs*0.000001),0.998,1.002);}else{audio.playbackRate=clamp(1.0+(errMs*0.000002),0.995,1.005);}}
+// Error tracking for statistics
+let errHistory2s=[];
+let errHistoryAll=[];
+const ERR_2S_SIZE=8; // 2 seconds at 250ms poll rate
+
+async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();posHistory=[];errHistory2s=[];errHistoryAll=[];}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];return;}const nowMs=Date.now();let serverMs=Number(msg.server_ms);if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){serverMs=nowMs;}const smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);posHistory.push(smoothPosMs);if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;const targetSec=avgPosMs/1000.0;const localSec=audio.currentTime||0;const errMs=(targetSec-localSec)*1000.0;localEl.textContent=Math.round(localSec*1000);errEl.textContent=Math.round(errMs);errHistory2s.push(errMs);if(errHistory2s.length>ERR_2S_SIZE)errHistory2s.shift();errHistoryAll.push(errMs);const avgErr2s=errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length;const avgErrAll=errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length;avgErr2sEl.textContent=Math.round(avgErr2s);avgErrAllEl.textContent=Math.round(avgErrAll);if(audio.paused)await safePlay();if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){audio.playbackRate=1.0;return;}if(Math.abs(errMs)>2000){audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));audio.playbackRate=1.0;posHistory=[];return;}if(Math.abs(errMs)<150){audio.playbackRate=1.0;}else if(Math.abs(errMs)<500){audio.playbackRate=clamp(1.0+(errMs*0.000001),0.998,1.002);}else{audio.playbackRate=clamp(1.0+(errMs*0.000002),0.995,1.005);}}
 
 // Fetch and display version (cache-busting)
 fetch('/listen/version.php?t='+Date.now()).then(r=>r.text()).then(v=>document.getElementById('version').textContent='v'+v.trim()).catch(()=>{});
