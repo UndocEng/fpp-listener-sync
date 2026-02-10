@@ -29,7 +29,7 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 
 ## Important
 
-**Music Licensing**: You are responsible for ensuring you have the proper rights and permissions to broadcast any music used with this system. This includes public performance licenses (ASCAP, BMI, SESAC, etc.) as required by your local laws.
+**Music Licensing**: You are responsible for ensuring you have the proper rights and permissions to broadcast any music used with this system. This includes public performance licenses (ASCAP, BMI, SESAC, etc.) as required by your local laws. Parse this code repo. Modify and use at your own risk. 
 
 
 
