@@ -185,6 +185,10 @@ if ! ip link show wlan1 >/dev/null 2>&1; then
   fail "Cannot continue without wlan1 interface"
 fi
 
+# Deploy systemd-networkd config for FPP network settings display
+sudo mkdir -p /etc/systemd/network
+sudo cp "$SCRIPT_DIR/config/20-listener-ap.network" /etc/systemd/network/20-listener-ap.network
+
 # Configure wlan1 using ip commands instead of systemd-networkd
 # This avoids conflicts with FPP's existing network management
 sudo ip addr flush dev wlan1 2>/dev/null || true

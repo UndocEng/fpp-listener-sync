@@ -4,9 +4,10 @@
 
     # CAPTIVE PORTAL DETECTION - Handle device detection URLs FIRST (any domain)
     # Android/Chrome checks generate_204, Apple checks hotspot-detect.html, etc.
+    # Redirect to IP address directly (not listen.local) to avoid extra DNS lookup
     RewriteCond %{REQUEST_URI} ^/(generate_204|gen_204|hotspot-detect\.html|success\.html|success\.txt|connecttest\.txt|canonical\.html|ncsi\.txt|redirect)$ [NC,OR]
     RewriteCond %{HTTP_HOST} ^(captive\.apple\.com|connectivitycheck\.gstatic\.com|clients[0-9]\.google\.com|www\.msftconnecttest\.com|msftncsi\.com)$ [NC]
-    RewriteRule ^ http://listen.local/listen/ [R=302,L]
+    RewriteRule ^ http://192.168.50.1/listen/ [R=302,L]
 
     # SECURITY: Whitelist approach - only allow /listen/ and /music/ from public network
     # Check if accessing from public network (192.168.50.x or listen.local)
@@ -34,7 +35,8 @@
 
     # CATCH-ALL: Any other domain (google.com, facebook.com, etc.) redirect to listen page
     # This catches all DNS wildcard traffic from public AP
+    # Redirect to IP address directly to avoid DNS lookup delay
     RewriteCond %{HTTP_HOST} !^192\.168\.50\.1(:[0-9]+)?$ [NC]
     RewriteCond %{HTTP_HOST} !^listen\.local(:[0-9]+)?$ [NC]
-    RewriteRule ^ http://listen.local/listen/ [R=302,L]
+    RewriteRule ^ http://192.168.50.1/listen/ [R=302,L]
 </IfModule>
