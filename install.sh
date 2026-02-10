@@ -63,6 +63,10 @@ sudo cp "$SCRIPT_DIR/www/listen/index.html" "$LISTEN_WEB/index.html"
 
 sudo cp "$SCRIPT_DIR/www/listen/status.php" "$LISTEN_WEB/status.php"
 
+sudo cp "$SCRIPT_DIR/www/listen/version.php" "$LISTEN_WEB/version.php"
+
+sudo cp "$SCRIPT_DIR/www/listen/version-debug.php" "$LISTEN_WEB/version-debug.php"
+
 sudo cp "$SCRIPT_DIR/www/listen/logo.png" "$LISTEN_WEB/logo.png"
 
 sudo cp "$SCRIPT_DIR/www/qrcode.html" "$APACHE_ROOT/qrcode.html"
