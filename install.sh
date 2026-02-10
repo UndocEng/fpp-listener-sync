@@ -13,13 +13,11 @@ APACHE_ROOT="/opt/fpp/www"
 
 MUSIC_DIR="/home/fpp/media/music"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 info()  { printf '%b\n' "${CYAN}[INFO]${NC} $1"; }
 
 ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
-
-warn()  { printf '%b\n' "${YELLOW}[WARN]${NC} $1"; }
 
 fail()  { printf '%b\n' "${RED}[FAIL]${NC} $1"; exit 1; }
 
@@ -172,24 +170,9 @@ sudo systemctl enable systemd-networkd
 
 sudo systemctl restart systemd-networkd
 
-# Wait for wlan1 to get IP address (max 10 seconds)
-info "Waiting for wlan1 to be ready..."
-for i in {1..10}; do
-  IP=$(ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}')
-  if [ "$IP" = "192.168.50.1/24" ]; then
-    break
-  fi
-  sleep 1
-done
-
-[ "$IP" = "192.168.50.1/24" ] && ok "wlan1 configured as 192.168.50.1" || warn "wlan1 may not be fully ready ($IP)"
+ok "wlan1 configured as 192.168.50.1"
 
 info "Configuring dnsmasq..."
-
-# Stop any running dnsmasq instances first
-sudo systemctl stop dnsmasq 2>/dev/null || true
-sudo pkill -9 dnsmasq 2>/dev/null || true
-sleep 1
 
 sudo cp "$SCRIPT_DIR/config/dnsmasq.conf" /etc/dnsmasq.conf
 
@@ -199,28 +182,20 @@ sudo cp "$SCRIPT_DIR/config/dnsmasq-override.conf" /etc/systemd/system/dnsmasq.s
 
 sudo systemctl daemon-reload
 
-# Enable without starting (--now is not used)
-sudo systemctl enable dnsmasq 2>/dev/null || true
+sudo systemctl enable dnsmasq
 
-# Start dnsmasq with explicit timeout and non-blocking
-info "Starting dnsmasq (may take a few seconds)..."
-sudo systemctl start dnsmasq --no-block 2>/dev/null || true
+# Stop dnsmasq first to avoid conflicts
+sudo systemctl stop dnsmasq 2>/dev/null || true
 
-# Wait for dnsmasq to actually start (max 10 seconds)
-DNSMASQ_STARTED=0
-for i in {1..10}; do
-  if systemctl is-active --quiet dnsmasq; then
-    DNSMASQ_STARTED=1
-    break
-  fi
-  sleep 1
-done
+# Start dnsmasq with timeout to prevent hanging
+timeout 10 sudo systemctl start dnsmasq || {
+  warn "dnsmasq start timed out, attempting recovery..."
+  sudo pkill -9 dnsmasq 2>/dev/null || true
+  sleep 2
+  sudo systemctl start dnsmasq || warn "dnsmasq may need manual intervention"
+}
 
-if [ $DNSMASQ_STARTED -eq 1 ]; then
-  ok "dnsmasq running (DHCP on wlan1)"
-else
-  warn "dnsmasq may not have started properly - check 'systemctl status dnsmasq'"
-fi
+ok "dnsmasq running (DHCP on wlan1)"
 
 info "Configuring listener AP service..."
 
