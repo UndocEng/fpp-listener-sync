@@ -106,19 +106,9 @@ const enableBtn=document.getElementById('enableBtn'),audio=document.getElementBy
 
 let enabled=false,currentBase="",pollTimer=null,haveMetadata=false,needInitialSeek=false;
 
-// Clock offset tracking with RTT compensation
-let clockOffsetMs=0;
-let clockOffsetInit=false;
-let rttMs=0;
-let hardSeekStrike=0;
-
-// Audio hardware latency compensation (ms to advance target)
-// Increase this value if audio is consistently behind
-const AUDIO_LATENCY_MS=1000; // Start with 1 second based on user observation
-
-// PI Controller state
-let integralError=0;
-let lastPlaybackRate=1.0;
+// Error averaging for smooth convergence
+let errorHistory=[];
+const ERROR_HISTORY_SIZE=8; // Average last 8 samples (2 seconds at 250ms poll)
 
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 
@@ -132,25 +122,13 @@ enableBtn.onclick=()=>{enabled=true;enableBtn.disabled=true;enableBtn.textConten
 
 async function pollOnce(){
 if(!enabled)return;
-const tSend=performance.now();
-const tSendWall=Date.now();
+const t0=Date.now();
 try{
 const url=`${location.origin}/listen/status.php?ts=${Date.now()}`;
 const r=await fetch(url,{cache:'no-store'});
 if(!r.ok)throw new Error(`HTTP ${r.status}`);
 const msg=await r.json();
-const tRecv=performance.now();
-const rtt=(tRecv-tSend);
-rttMs=rttMs?(0.85*rttMs+0.15*rtt):rtt;
-// Compute clock offset with half-RTT correction
-const serverMs=Number(msg.server_ms);
-if(Number.isFinite(serverMs)&&serverMs>1000000000000){
-const estClientAtServerSample=tSendWall+(rtt/2);
-const newOffset=serverMs-estClientAtServerSample;
-clockOffsetMs=clockOffsetInit?(0.90*clockOffsetMs+0.10*newOffset):newOffset;
-clockOffsetInit=true;
-}
-pollEl.textContent=`ok (${Math.round(rtt)} ms)`;
+pollEl.textContent=`ok (${Date.now()-t0} ms)`;
 fetchErrEl.textContent="";
 sync(msg);
 }catch(e){
@@ -173,83 +151,52 @@ let initErrCalculated=false;
 const ERR_2S_SIZE=8; // 2 seconds at 250ms poll rate
 const ERR_INIT_SIZE=2; // First 500ms (2 polls at 250ms)
 
-async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;needInitialSeek=true;syncAttempts=0;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;integralError=0;lastPlaybackRate=1.0;}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;syncAttempts=0;integralError=0;lastPlaybackRate=1.0;return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;syncAttempts=0;integralError=0;lastPlaybackRate=1.0;return;}// Use clock offset to predict server time more accurately
-const nowWall=Date.now();
-const serverNow=clockOffsetInit?(nowWall+clockOffsetMs):nowWall;
-let sampleServerMs=Number(msg.server_ms);
-if(!Number.isFinite(sampleServerMs)||sampleServerMs<1000000000000){sampleServerMs=serverNow;}
-const basePosMs=Number(msg.pos_ms||0);
-// Add audio latency compensation to advance target position
-const smoothPosMs=basePosMs+(serverNow-sampleServerMs)+AUDIO_LATENCY_MS;
+async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;needInitialSeek=true;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;errorHistory=[];}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;errorHistory=[];return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;errorHistory=[];return;}// Simple time calculation
+const nowMs=Date.now();
+let serverMs=Number(msg.server_ms);
+if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){serverMs=nowMs;}
+const smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);
 posHistory.push(smoothPosMs);
 if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();
 const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;
-const targetSec=avgPosMs/1000.0;const localSec=audio.currentTime||0;const errMs=(targetSec-localSec)*1000.0;localEl.textContent=Math.round(localSec*1000);errEl.textContent=Math.round(errMs);errHistory2s.push(errMs);if(errHistory2s.length>ERR_2S_SIZE)errHistory2s.shift();errHistoryAll.push(errMs);const avgErr2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length):0;const avgErrAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;avgErr2sEl.textContent=Math.round(avgErr2s);avgErrAllEl.textContent=Math.round(avgErrAll);if(!initErrCalculated&&errHistoryInit.length<ERR_INIT_SIZE){errHistoryInit.push(errMs);}if(!initErrCalculated&&errHistoryInit.length>=ERR_INIT_SIZE){const avgInitErr=errHistoryInit.reduce((a,b)=>a+b,0)/errHistoryInit.length;initErrEl.textContent=Math.round(avgInitErr);initErrCalculated=true;}let bufferedSec=0;if(audio.buffered.length>0){bufferedSec=audio.buffered.end(audio.buffered.length-1)-localSec;}bufferedEl.textContent=bufferedSec.toFixed(1);playRateEl.textContent=audio.playbackRate.toFixed(3);if(audio.paused)await safePlay();// ONE initial seek when track starts and metadata is ready
-if(needInitialSeek){
-if(haveMetadata&&!audio.paused&&Number.isFinite(audio.duration)&&audio.duration>0){
-audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
-audio.playbackRate=1.0;
-integralError=0;
-lastPlaybackRate=1.0;
+const targetSec=avgPosMs/1000.0;const localSec=audio.currentTime||0;const errMs=(targetSec-localSec)*1000.0;localEl.textContent=Math.round(localSec*1000);errEl.textContent=Math.round(errMs);errHistory2s.push(errMs);if(errHistory2s.length>ERR_2S_SIZE)errHistory2s.shift();errHistoryAll.push(errMs);const avgErr2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length):0;const avgErrAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;avgErr2sEl.textContent=Math.round(avgErr2s);avgErrAllEl.textContent=Math.round(avgErrAll);if(!initErrCalculated&&errHistoryInit.length<ERR_INIT_SIZE){errHistoryInit.push(errMs);}if(!initErrCalculated&&errHistoryInit.length>=ERR_INIT_SIZE){const avgInitErr=errHistoryInit.reduce((a,b)=>a+b,0)/errHistoryInit.length;initErrEl.textContent=Math.round(avgInitErr);initErrCalculated=true;}let bufferedSec=0;if(audio.buffered.length>0){bufferedSec=audio.buffered.end(audio.buffered.length-1)-localSec;}bufferedEl.textContent=bufferedSec.toFixed(1);playRateEl.textContent=audio.playbackRate.toFixed(3);if(audio.paused)await safePlay();// Initial seek when track starts
+if(needInitialSeek&&!audio.paused){
+audio.currentTime=Math.max(0,Math.min(audio.duration||999999,targetSec));
 needInitialSeek=false;
-hardSeekStrike=0;
 posHistory=[];
+errorHistory=[];
 return;
-}else{
-audio.playbackRate=1.0;
-return;
-}
 }
 
-// If metadata not ready, do nothing
 if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){
 audio.playbackRate=1.0;
 return;
 }
 
-// Hard seek if persistently way off (reduced threshold for light show timing)
-const HARD_SEEK_MS=800;
-const HARD_SEEK_STRIKES=2;
-if(Math.abs(errMs)>HARD_SEEK_MS){
-hardSeekStrike++;
-if(hardSeekStrike>=HARD_SEEK_STRIKES){
+// Add error to history for averaging
+errorHistory.push(errMs);
+if(errorHistory.length>ERROR_HISTORY_SIZE)errorHistory.shift();
+
+// Calculate averaged error
+const avgError=errorHistory.length>0?(errorHistory.reduce((a,b)=>a+b,0)/errorHistory.length):errMs;
+
+// Emergency seek if error way too large
+if(Math.abs(errMs)>500){
 audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
 audio.playbackRate=1.0;
-integralError=0;
-lastPlaybackRate=1.0;
-hardSeekStrike=0;
-}
+errorHistory=[];
 return;
-}else{
-hardSeekStrike=0;
 }
 
-// PI controller for normal drift - NO seeking
-const DEAD=100; // Wider dead zone for stability
-const MAX_RATE=1.15; // ±15% for faster convergence
-const MIN_RATE=0.85;
-if(Math.abs(errMs)<=DEAD){
+// If averaged error within ±50ms, lock at 1.0
+if(Math.abs(avgError)<=50){
 audio.playbackRate=1.0;
-integralError*=0.5;
-lastPlaybackRate=1.0;
 return;
 }
 
-// PI with anti-windup
-integralError+=errMs;
-integralError=Math.max(-10000,Math.min(10000,integralError));
-
-// More aggressive gains for light show timing
-const Kp2=0.002; // 2.5x more aggressive
-const Ki2=0.00003; // 3x more aggressive
-const adjustment=(Kp2*errMs)+(Ki2*integralError);
-const targetRate=clamp(1.0+adjustment,MIN_RATE,MAX_RATE);
-
-// Faster response for light show sync
-const SMOOTH=0.7; // 70% toward target (was 35%)
-const smoothed=lastPlaybackRate+SMOOTH*(targetRate-lastPlaybackRate);
-audio.playbackRate=smoothed;
-lastPlaybackRate=smoothed;
+// Adjust playback rate based on averaged error (simple proportional)
+const adjustment=avgError*0.00005; // Gentle adjustment based on average
+audio.playbackRate=clamp(1.0+adjustment,0.90,1.10);
 }
 
 // Fetch and display version (cache-busting)
