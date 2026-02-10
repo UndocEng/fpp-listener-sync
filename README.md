@@ -51,7 +51,7 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 
 ## Getting Started
 
-### 1. Enable SSH on FPP
+### 1. Enable SSH on Older FPP
 
 1. Open FPP web interface (usually `http://fpp.local` or your Pi's IP)
 2. Click the **Help** menu (top right)
@@ -59,6 +59,9 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 4. Enable SSH and click **Save**
 
 ### 2. Connect via SSH
+
+**From FPP**
+- Select **>_SSH Shell** from FPP Menu
 
 **From Windows:**
 - Use PuTTY or Windows Terminal
@@ -120,7 +123,7 @@ cd /home/fpp/fpp-listener-sync
 
 # Discard local changes and reset to latest
 git fetch origin
-git reset --hard origin/Update_uninstall.sh
+git reset --hard origin/main
 
 # Run installer
 sudo ./install.sh
@@ -174,15 +177,7 @@ sudo ./uninstall.sh
 
 ```
 
-## Access URLs
 
-After connecting to the **SHOW_AUDIO** WiFi network:
-
-- **Listening Page**: `listen.local/listen/` (easy to remember!) or `192.168.50.1/listen/`
-- **QR Code Generator**: `listen.local/qrcode.html` or `192.168.50.1/qrcode.html`
-- **Print Sign**: `listen.local/print-sign.html` or `192.168.50.1/print-sign.html`
-
-💡 **Tip**: Share **`listen.local/listen/`** with visitors — it's much easier to remember than an IP address!
 
 ## Visitor Instructions
 
