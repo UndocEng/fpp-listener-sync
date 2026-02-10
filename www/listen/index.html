@@ -112,6 +112,10 @@ let clockOffsetInit=false;
 let rttMs=0;
 let hardSeekStrike=0;
 
+// Audio hardware latency compensation (ms to advance target)
+// Increase this value if audio is consistently behind
+const AUDIO_LATENCY_MS=1000; // Start with 1 second based on user observation
+
 // PI Controller state
 let integralError=0;
 let lastPlaybackRate=1.0;
@@ -175,7 +179,8 @@ const serverNow=clockOffsetInit?(nowWall+clockOffsetMs):nowWall;
 let sampleServerMs=Number(msg.server_ms);
 if(!Number.isFinite(sampleServerMs)||sampleServerMs<1000000000000){sampleServerMs=serverNow;}
 const basePosMs=Number(msg.pos_ms||0);
-const smoothPosMs=basePosMs+(serverNow-sampleServerMs);
+// Add audio latency compensation to advance target position
+const smoothPosMs=basePosMs+(serverNow-sampleServerMs)+AUDIO_LATENCY_MS;
 posHistory.push(smoothPosMs);
 if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();
 const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;
