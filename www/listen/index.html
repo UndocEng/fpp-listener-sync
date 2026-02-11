@@ -375,19 +375,17 @@ async function sync(msg){
 
   // --- Time calculation with clock offset ---
   const nowMs=Date.now();
-  let serverMs=Number(msg.server_ms);
+  const serverMs=Number(msg.server_ms);
+  const rawPosMs=Number(msg.pos_ms||0);
 
   let smoothPosMs;
   if(clockOffsetValid){
-    // Convert client time to server time domain, then compute elapsed
+    // Convert client time to server time domain, then compute elapsed since server sampled pos
     const clientAsServerTime=nowMs+clockOffset;
-    smoothPosMs=Number(msg.pos_ms||0)+(clientAsServerTime-serverMs);
+    smoothPosMs=rawPosMs+(clientAsServerTime-serverMs);
   }else{
-    // Fallback: assume clocks are roughly aligned
-    if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){
-      serverMs=nowMs;
-    }
-    smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);
+    // No valid clock offset yet - use pos_ms directly (only off by transit delay ~2-10ms)
+    smoothPosMs=rawPosMs;
   }
 
   posHistory.push(smoothPosMs);

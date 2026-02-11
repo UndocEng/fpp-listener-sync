@@ -10,6 +10,7 @@ import json
 import time
 import logging
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
 try:
@@ -51,7 +52,7 @@ def find_audio_file(base):
         return _audio_cache[base]
     for ext in AUDIO_FORMATS:
         if (MUSIC_DIR / f"{base}.{ext}").exists():
-            url = f"/music/{base}.{ext}"
+            url = f"/music/{urllib.parse.quote(base)}.{ext}"
             _audio_cache[base] = url
             return url
     _audio_cache[base] = ""
