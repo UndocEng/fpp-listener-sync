@@ -21,6 +21,12 @@ ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
 
 fail()  { printf '%b\n' "${RED}[FAIL]${NC} $1"; exit 1; }
 
+VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "unknown")
+
+echo ""
+info "FPP Listener Sync - v${VERSION}"
+echo ""
+
 info "Checking prerequisites..."
 
 [ -d "$APACHE_ROOT" ] || fail "Apache docroot $APACHE_ROOT not found. Is this an FPP system?"
