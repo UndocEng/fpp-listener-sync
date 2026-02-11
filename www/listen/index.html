@@ -110,9 +110,13 @@ const enableBtn=document.getElementById('enableBtn'),audio=document.getElementBy
 
 let enabled=false,currentBase="",pollTimer=null,haveMetadata=false,needInitialSeek=false;
 
-// Error averaging for smooth convergence
-let errorHistory=[];
-const ERROR_HISTORY_SIZE=8; // Average last 8 samples (2 seconds at 250ms poll)
+// Clock offset estimation (NTP-style)
+let offsetMs=0;
+let bestRttMs=Infinity;
+
+// PLL controller state
+let pllLastErr=0;
+let pllLastTime=0;
 
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 
@@ -126,13 +130,28 @@ enableBtn.onclick=()=>{enabled=true;enableBtn.disabled=true;enableBtn.textConten
 
 async function pollOnce(){
 if(!enabled)return;
-const t0=Date.now();
+const t0Perf=performance.now();
+const t0Wall=Date.now();
 try{
 const url=`${location.origin}/listen/status.php?ts=${Date.now()}`;
 const r=await fetch(url,{cache:'no-store'});
 if(!r.ok)throw new Error(`HTTP ${r.status}`);
 const msg=await r.json();
-pollEl.textContent=`ok (${Date.now()-t0} ms)`;
+const t1Perf=performance.now();
+const rttMs=t1Perf-t0Perf;
+// Update clock offset using best RTT samples
+if(msg.server_ms_start&&msg.server_ms_end){
+const serverMid=(msg.server_ms_start+msg.server_ms_end)/2;
+const clientMid=t0Wall+(rttMs/2);
+const newOffset=serverMid-clientMid;
+if(rttMs<bestRttMs){
+offsetMs=newOffset;
+bestRttMs=rttMs;
+}else{
+offsetMs=0.9*offsetMs+0.1*newOffset; // Smooth
+}
+}
+pollEl.textContent=`ok (${Math.round(rttMs)} ms)`;
 fetchErrEl.textContent="";
 sync(msg);
 }catch(e){
@@ -155,11 +174,12 @@ let initErrCalculated=false;
 const ERR_2S_SIZE=8; // 2 seconds at 250ms poll rate
 const ERR_INIT_SIZE=2; // First 500ms (2 polls at 250ms)
 
-async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;needInitialSeek=true;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;errorHistory=[];}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;errorHistory=[];return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;errorHistory=[];return;}// Simple time calculation
+async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;needInitialSeek=true;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;pllLastErr=0;pllLastTime=0;}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;pllLastErr=0;pllLastTime=0;return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;pllLastErr=0;pllLastTime=0;return;}// Time calculation with clock offset compensation
 const nowMs=Date.now();
+const nowServerMs=nowMs+offsetMs; // Convert phone time to server time
 let serverMs=Number(msg.server_ms);
-if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){serverMs=nowMs;}
-const smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);
+if(!Number.isFinite(serverMs)||serverMs<1000000000000){serverMs=nowServerMs;}
+const smoothPosMs=Number(msg.pos_ms||0)+(nowServerMs-serverMs);
 posHistory.push(smoothPosMs);
 if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();
 const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;
@@ -168,7 +188,8 @@ if(needInitialSeek&&!audio.paused){
 audio.currentTime=Math.max(0,Math.min(audio.duration||999999,targetSec));
 needInitialSeek=false;
 posHistory=[];
-errorHistory=[];
+pllLastErr=0;
+pllLastTime=0;
 return;
 }
 
@@ -177,31 +198,31 @@ audio.playbackRate=1.0;
 return;
 }
 
-// Add error to history for averaging
-errorHistory.push(errMs);
-if(errorHistory.length>ERROR_HISTORY_SIZE)errorHistory.shift();
+avgErrUsedEl.textContent=Math.round(errMs);
 
-// Calculate averaged error
-const avgError=errorHistory.length>0?(errorHistory.reduce((a,b)=>a+b,0)/errorHistory.length):errMs;
-avgErrUsedEl.textContent=Math.round(avgError);
-
-// Emergency seek if error way too large
-if(Math.abs(errMs)>500){
+// Hard seek if error > 250ms
+if(Math.abs(errMs)>250){
 audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
 audio.playbackRate=1.0;
-errorHistory=[];
+pllLastErr=0;
+pllLastTime=0;
 return;
 }
 
-// If averaged error within ±50ms, lock at 1.0
-if(Math.abs(avgError)<=50){
-audio.playbackRate=1.0;
-return;
-}
+// PLL controller: Proportional + Derivative
+const nowTime=Date.now();
+const dt=pllLastTime>0?(nowTime-pllLastTime):250;
+pllLastTime=nowTime;
 
-// Adjust playback rate based on averaged error (simple proportional)
-const adjustment=avgError*0.00005; // Gentle adjustment based on average
-audio.playbackRate=clamp(1.0+adjustment,0.90,1.10);
+const Kp=0.00008; // Proportional gain
+const Kd=0.0002; // Derivative gain (damping)
+
+const proportional=Kp*errMs;
+const derivative=Kd*(errMs-pllLastErr)/(dt/1000); // Error rate of change
+pllLastErr=errMs;
+
+const adjustment=proportional+derivative;
+audio.playbackRate=clamp(1.0+adjustment,0.98,1.02); // ±2% limit
 }
 
 // Fetch and display version (cache-busting)
