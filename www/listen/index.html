@@ -131,7 +131,6 @@ debugBox=document.getElementById('debugBox');
 let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false;
 
 // --- WebSocket ---
-const WS_PORT=8080;
 const WS_RECONNECT_MS=2000;
 const WS_PING_INTERVAL_MS=3000;
 const HTTP_POLL_MS=250;
@@ -141,7 +140,9 @@ let ws=null, wsConnected=false, wsPingTimer=null, wsReconnectTimer=null;
 // --- Clock offset estimation ---
 let clockOffset=0, clockOffsetValid=false;
 const RTT_HISTORY_SIZE=5;
+const OFFSET_HISTORY_SIZE=8;
 let rttHistory=[];
+let offsetHistory=[];
 
 // --- Position averaging ---
 let posHistory=[];
@@ -158,11 +159,33 @@ debugCheck.addEventListener('change',()=>{debugBox.classList.toggle('hidden',!de
 audio.addEventListener('loadedmetadata',()=>{haveMetadata=true;});
 audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio file detected";});
 
+// === Shared Clock Offset ===
+
+function updateClockOffset(serverTs, clientSendTs, rtt){
+  // NTP-style: offset = serverTs - clientSendTs - rtt/2
+  const sample=serverTs-clientSendTs-(rtt/2);
+
+  offsetHistory.push(sample);
+  if(offsetHistory.length>OFFSET_HISTORY_SIZE)offsetHistory.shift();
+
+  // Median filter to reject outliers, then EWMA smooth
+  const sorted=[...offsetHistory].sort((a,b)=>a-b);
+  const median=sorted[Math.floor(sorted.length/2)];
+
+  if(!clockOffsetValid){
+    clockOffset=median;
+    clockOffsetValid=true;
+  }else{
+    clockOffset=clockOffset*0.7+median*0.3;
+  }
+  offsetEl.textContent=Math.round(clockOffset);
+}
+
 // === WebSocket Connection ===
 
 function connectWebSocket(){
   if(ws&&(ws.readyState===WebSocket.CONNECTING||ws.readyState===WebSocket.OPEN))return;
-  const wsUrl='ws://192.168.50.1/ws';
+  const wsUrl='ws://'+location.hostname+'/ws';
   try{ws=new WebSocket(wsUrl);}catch(e){startHttpFallback();return;}
 
   ws.onopen=()=>{
@@ -212,18 +235,8 @@ function handlePong(data){
   if(rtt>0&&rtt<500){
     rttHistory.push(rtt);
     if(rttHistory.length>RTT_HISTORY_SIZE)rttHistory.shift();
-
-    const newOffset=serverTs-clientTs-(rtt/2);
-
-    if(!clockOffsetValid){
-      clockOffset=newOffset;
-      clockOffsetValid=true;
-    }else{
-      clockOffset=clockOffset*0.7+newOffset*0.3;
-    }
-
     rttEl.textContent=rtt;
-    offsetEl.textContent=Math.round(clockOffset);
+    updateClockOffset(serverTs,clientTs,rtt);
   }
 }
 
@@ -247,8 +260,17 @@ async function pollOnce(){
     const r=await fetch(url,{cache:'no-store'});
     if(!r.ok)throw new Error('HTTP '+r.status);
     const msg=await r.json();
-    if(!wsConnected)pollEl.textContent='HTTP ok ('+( Date.now()-t0)+' ms)';
+    const t1=Date.now();
+    const rtt=t1-t0;
+    if(!wsConnected)pollEl.textContent='HTTP ok ('+rtt+' ms)';
     fetchErrEl.textContent='';
+
+    // HTTP-based clock offset estimation using server_ms from status.php
+    if(msg.server_ms&&rtt>0&&rtt<500){
+      updateClockOffset(msg.server_ms,t0,rtt);
+      if(!wsConnected)rttEl.textContent=rtt;
+    }
+
     sync(msg);
   }catch(e){
     if(!wsConnected)pollEl.textContent='HTTP FAILED';
@@ -407,22 +429,22 @@ async function sync(msg){
     return;
   }
 
-  // Emergency seek if very far off
-  if(Math.abs(errMs)>500){
+  // Emergency seek if very far off (>250ms)
+  if(Math.abs(errMs)>250){
     audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
     audio.playbackRate=1.0;
     return;
   }
 
-  // Lock at 1.0 if close enough
-  if(Math.abs(errMs)<30){
+  // Lock at 1.0 if close enough (<20ms)
+  if(Math.abs(errMs)<20){
     audio.playbackRate=1.0;
     return;
   }
 
-  // Simple proportional control
-  const adjustment=errMs*0.0001;
-  audio.playbackRate=clamp(1.0+adjustment,0.95,1.05);
+  // Proportional control: ±2% max adjustment
+  const adjustment=errMs*0.0005;
+  audio.playbackRate=clamp(1.0+adjustment,0.98,1.02);
 }
 
 // Fetch and display version (cache-busting)

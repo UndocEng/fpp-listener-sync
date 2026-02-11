@@ -41,13 +41,20 @@ def basename_noext(path):
     return Path(path).stem
 
 
+_audio_cache = {}
+
 def find_audio_file(base):
-    """Find matching audio file, return URL path or empty string."""
+    """Find matching audio file, return URL path or empty string. Cached per base name."""
     if not base:
         return ""
+    if base in _audio_cache:
+        return _audio_cache[base]
     for ext in AUDIO_FORMATS:
         if (MUSIC_DIR / f"{base}.{ext}").exists():
-            return f"/music/{base}.{ext}"
+            url = f"/music/{base}.{ext}"
+            _audio_cache[base] = url
+            return url
+    _audio_cache[base] = ""
     return ""
 
 
