@@ -128,7 +128,7 @@ debugCheck=document.getElementById('debugCheck'),
 debugBox=document.getElementById('debugBox');
 
 // --- State ---
-let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false;
+let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0;
 
 // --- WebSocket ---
 const WS_RECONNECT_MS=2000;
@@ -191,6 +191,10 @@ function connectWebSocket(){
   ws.onopen=()=>{
     wsConnected=true;
     stopHttpPolling();
+    // Flush any bad HTTP-based offset samples (PHP 32-bit intval overflow)
+    offsetHistory=[];
+    clockOffsetValid=false;
+    clockOffset=0;
     pollEl.textContent='WebSocket connected';
     fetchErrEl.textContent='';
     wsPingTimer=setInterval(sendPing,WS_PING_INTERVAL_MS);
@@ -427,9 +431,13 @@ async function sync(msg){
     return;
   }
 
-  // Emergency seek if very far off (>250ms)
+  // Emergency seek if very far off (>250ms) - throttle to once per second
   if(Math.abs(errMs)>250){
-    audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
+    const now=Date.now();
+    if(now-lastSeekMs>1000){
+      audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
+      lastSeekMs=now;
+    }
     audio.playbackRate=1.0;
     return;
   }
