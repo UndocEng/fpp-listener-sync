@@ -146,7 +146,7 @@ let offsetHistory=[];
 
 // --- Position averaging ---
 let posHistory=[];
-const POS_HISTORY_SIZE=2;
+const POS_HISTORY_SIZE=1;
 
 // --- Error tracking ---
 let errHistory2s=[], errHistoryAll=[];
@@ -451,14 +451,15 @@ async function sync(msg){
     return;
   }
 
-  // Lock at 1.0 if close enough (<30ms)
-  if(Math.abs(errMs)<30){
+  // Lock at 1.0 if close enough (<50ms)
+  if(Math.abs(avgErr2s)<50){
     audio.playbackRate=1.0;
     return;
   }
 
-  // Proportional control: ±2% max adjustment
-  const adjustment=errMs*0.0003;
+  // Proportional control using 2s average error (smoother than instantaneous)
+  // ±2% max adjustment, gain 0.0002
+  const adjustment=avgErr2s*0.0002;
   audio.playbackRate=clamp(1.0+adjustment,0.98,1.02);
 }
 
