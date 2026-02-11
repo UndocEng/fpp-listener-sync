@@ -115,7 +115,7 @@ async def broadcast(message):
             dead.add(ws)
         except Exception:
             dead.add(ws)
-    clients -= dead
+    clients.difference_update(dead)
 
 
 async def fpp_poll_loop():
@@ -136,7 +136,7 @@ async def fpp_poll_loop():
         await asyncio.sleep(sleep_s)
 
 
-async def handle_client(websocket):
+async def handle_client(websocket, path=None):
     """Handle a single WebSocket client connection."""
     clients.add(websocket)
     remote = websocket.remote_address
@@ -182,7 +182,6 @@ async def main():
         ping_interval=20,
         ping_timeout=30,
         max_size=4096,
-        max_queue=16,
         compression=None
     ):
         logger.info(f"WebSocket server listening on ws://{WS_HOST}:{WS_PORT}")
