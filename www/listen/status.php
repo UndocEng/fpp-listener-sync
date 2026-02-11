@@ -33,10 +33,10 @@ function basename_noext($path) {
 
 $srcUrl = "http://127.0.0.1/api/fppd/status";
 
-$src = http_get_json($srcUrl);
-
-
+// Capture timestamp immediately before FPP call for better sync
 $server_ms = intval(microtime(true) * 1000);
+
+$src = http_get_json($srcUrl);
 
 
 if ($src === null) {
