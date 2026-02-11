@@ -121,6 +121,10 @@ info "Enabling Apache mod_rewrite and AllowOverride..."
 
 sudo a2enmod rewrite 2>/dev/null || ok "mod_rewrite already enabled"
 
+sudo a2enmod proxy 2>/dev/null || ok "mod_proxy already enabled"
+
+sudo a2enmod proxy_wstunnel 2>/dev/null || ok "mod_proxy_wstunnel already enabled"
+
 sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/apache2/conf-available/listener.conf 2>/dev/null || sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/httpd/conf.d/listener.conf 2>/dev/null || true
 
 sudo a2enconf listener 2>/dev/null || true

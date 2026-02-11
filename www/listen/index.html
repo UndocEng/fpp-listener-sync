@@ -162,7 +162,7 @@ audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio fil
 
 function connectWebSocket(){
   if(ws&&(ws.readyState===WebSocket.CONNECTING||ws.readyState===WebSocket.OPEN))return;
-  const wsUrl='ws://192.168.50.1:'+WS_PORT;
+  const wsUrl='ws://192.168.50.1/ws';
   try{ws=new WebSocket(wsUrl);}catch(e){startHttpFallback();return;}
 
   ws.onopen=()=>{
