@@ -82,6 +82,8 @@ sudo cp "$SCRIPT_DIR/www/listen/detect.php" "$LISTEN_WEB/detect.php"
 
 sudo cp "$SCRIPT_DIR/www/listen/logo.png" "$LISTEN_WEB/logo.png"
 
+sudo cp "$SCRIPT_DIR/VERSION" "$LISTEN_WEB/VERSION"
+
 sudo cp "$SCRIPT_DIR/www/qrcode.html" "$APACHE_ROOT/qrcode.html"
 
 sudo cp "$SCRIPT_DIR/www/print-sign.html" "$APACHE_ROOT/print-sign.html"
