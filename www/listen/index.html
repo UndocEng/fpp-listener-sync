@@ -18,7 +18,7 @@
 
     .header img { width: 80px; height: 80px; }
 
-    .header h2 { margin: 8px 0 4px 0; color: #00e5ff; }
+    .header h2 { margin: 8px 0 4px 0; color: #00e5ff; font-size: 36px; font-weight: 700; }
 
     .small { opacity: .7; font-size: 14px; }
 
@@ -84,7 +84,21 @@
 
     <div><b>Local:</b> <span id="local">-</span> ms</div>
 
-    <div><b>Error:</b> <span id="err">-</span> ms</div>
+    <div><b>Error (instant):</b> <span id="err">-</span> ms</div>
+
+    <div><b>Error (averaged):</b> <span id="avgErrUsed">-</span> ms</div>
+
+    <div><b>Avg Error (2s):</b> <span id="avgErr2s">-</span> ms</div>
+
+    <div><b>Avg Error (all):</b> <span id="avgErrAll">-</span> ms</div>
+
+    <div><b>Initial Error (0.5s):</b> <span id="initErr">-</span> ms</div>
+
+    <div><b>Playback Rate:</b> <span id="playRate">1.0</span></div>
+
+    <div><b>Buffered:</b> <span id="buffered">-</span> s</div>
+
+    <div><b>Ready State:</b> <span id="readyState">-</span></div>
 
   </div>
 
@@ -92,9 +106,9 @@
 
 <script>
 
-const enableBtn=document.getElementById('enableBtn'),audio=document.getElementById('audio'),idleMsg=document.getElementById('idleMsg'),nowPlaying=document.getElementById('nowPlaying'),trackName=document.getElementById('trackName'),pollEl=document.getElementById('poll'),fetchErrEl=document.getElementById('fetchErr'),playErrEl=document.getElementById('playErr'),seqEl=document.getElementById('seq'),stateEl=document.getElementById('state'),targetEl=document.getElementById('target'),localEl=document.getElementById('local'),errEl=document.getElementById('err'),debugCheck=document.getElementById('debugCheck'),debugBox=document.getElementById('debugBox');
+const enableBtn=document.getElementById('enableBtn'),audio=document.getElementById('audio'),idleMsg=document.getElementById('idleMsg'),nowPlaying=document.getElementById('nowPlaying'),trackName=document.getElementById('trackName'),pollEl=document.getElementById('poll'),fetchErrEl=document.getElementById('fetchErr'),playErrEl=document.getElementById('playErr'),seqEl=document.getElementById('seq'),stateEl=document.getElementById('state'),targetEl=document.getElementById('target'),localEl=document.getElementById('local'),errEl=document.getElementById('err'),avgErrUsedEl=document.getElementById('avgErrUsed'),avgErr2sEl=document.getElementById('avgErr2s'),avgErrAllEl=document.getElementById('avgErrAll'),initErrEl=document.getElementById('initErr'),playRateEl=document.getElementById('playRate'),bufferedEl=document.getElementById('buffered'),readyStateEl=document.getElementById('readyState'),debugCheck=document.getElementById('debugCheck'),debugBox=document.getElementById('debugBox');
 
-let enabled=false,currentBase="",pollTimer=null,haveMetadata=false;
+let enabled=false,currentBase="",pollTimer=null,haveMetadata=false,needInitialSeek=false;
 
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 
@@ -106,11 +120,77 @@ audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio fil
 
 enableBtn.onclick=()=>{enabled=true;enableBtn.disabled=true;enableBtn.textContent="Audio Enabled";pollEl.textContent="POLLING...";if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(pollOnce,250);pollOnce();try{audio.muted=true;const p=audio.play();if(p&&typeof p.then==='function'){p.then(()=>{audio.pause();audio.currentTime=0;audio.muted=false;}).catch((e)=>{audio.muted=false;});}else{audio.muted=false;}}catch(e){audio.muted=false;}};
 
-async function pollOnce(){if(!enabled)return;const t0=Date.now();try{const url=`${location.origin}/listen/status.php?ts=${Date.now()}`;const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);const msg=await r.json();pollEl.textContent=`ok (${Date.now()-t0} ms)`;fetchErrEl.textContent="";sync(msg);}catch(e){pollEl.textContent="FAILED";fetchErrEl.textContent="Fetch error: "+(e?.message||e);}}
+async function pollOnce(){
+if(!enabled)return;
+const t0=Date.now();
+try{
+const url=`${location.origin}/listen/status.php?ts=${Date.now()}`;
+const r=await fetch(url,{cache:'no-store'});
+if(!r.ok)throw new Error(`HTTP ${r.status}`);
+const msg=await r.json();
+pollEl.textContent=`ok (${Date.now()-t0} ms)`;
+fetchErrEl.textContent="";
+sync(msg);
+}catch(e){
+pollEl.textContent="FAILED";
+fetchErrEl.textContent="Fetch error: "+(e?.message||e);
+}
+}
 
 async function safePlay(){try{const p=audio.play();if(p&&typeof p.catch==='function'){await p;}playErrEl.textContent="";}catch(e){playErrEl.textContent="Audio playback blocked: "+(e?.message||e);}}
 
-async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;return;}const nowMs=Date.now();let serverMs=Number(msg.server_ms);if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){serverMs=nowMs;}const smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);const targetSec=smoothPosMs/1000.0;const localSec=audio.currentTime||0;const errMs=(targetSec-localSec)*1000.0;localEl.textContent=Math.round(localSec*1000);errEl.textContent=Math.round(errMs);if(audio.paused)await safePlay();if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){audio.playbackRate=1.0;return;}if(Math.abs(errMs)>1000){audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));audio.playbackRate=1.0;return;}if(Math.abs(errMs)<60){audio.playbackRate=1.0;}else{audio.playbackRate=clamp(1.0+(errMs*0.000002),0.997,1.003);}}
+// Position averaging for smooth sync
+let posHistory=[];
+const POS_HISTORY_SIZE=2;
+
+// Error tracking for statistics
+let errHistory2s=[];
+let errHistoryAll=[];
+let errHistoryInit=[];
+let initErrCalculated=false;
+const ERR_2S_SIZE=8; // 2 seconds at 250ms poll rate
+const ERR_INIT_SIZE=2; // First 500ms (2 polls at 250ms)
+
+async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;needInitialSeek=true;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;return;}// Simple time calculation
+const nowMs=Date.now();
+let serverMs=Number(msg.server_ms);
+if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){serverMs=nowMs;}
+const smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);
+posHistory.push(smoothPosMs);
+if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();
+const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;
+const targetSec=avgPosMs/1000.0;const localSec=audio.currentTime||0;const errMs=(targetSec-localSec)*1000.0;localEl.textContent=Math.round(localSec*1000);errEl.textContent=Math.round(errMs);errHistory2s.push(errMs);if(errHistory2s.length>ERR_2S_SIZE)errHistory2s.shift();errHistoryAll.push(errMs);const avgErr2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length):0;const avgErrAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;avgErr2sEl.textContent=Math.round(avgErr2s);avgErrAllEl.textContent=Math.round(avgErrAll);if(!initErrCalculated&&errHistoryInit.length<ERR_INIT_SIZE){errHistoryInit.push(errMs);}if(!initErrCalculated&&errHistoryInit.length>=ERR_INIT_SIZE){const avgInitErr=errHistoryInit.reduce((a,b)=>a+b,0)/errHistoryInit.length;initErrEl.textContent=Math.round(avgInitErr);initErrCalculated=true;}let bufferedSec=0;if(audio.buffered.length>0){bufferedSec=audio.buffered.end(audio.buffered.length-1)-localSec;}bufferedEl.textContent=bufferedSec.toFixed(1);playRateEl.textContent=audio.playbackRate.toFixed(3);readyStateEl.textContent=audio.readyState;if(audio.paused)await safePlay();// Initial seek when track starts
+if(needInitialSeek&&!audio.paused){
+audio.currentTime=Math.max(0,Math.min(audio.duration||999999,targetSec));
+needInitialSeek=false;
+posHistory=[];
+return;
+}
+
+if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){
+audio.playbackRate=1.0;
+return;
+}
+
+avgErrUsedEl.textContent=Math.round(errMs);
+
+// Emergency seek if very far off
+if(Math.abs(errMs)>500){
+audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
+audio.playbackRate=1.0;
+return;
+}
+
+// Lock at 1.0 if close enough
+if(Math.abs(errMs)<30){
+audio.playbackRate=1.0;
+return;
+}
+
+// Simple proportional control
+const adjustment=errMs*0.0001;
+audio.playbackRate=clamp(1.0+adjustment,0.95,1.05);
+}
 
 // Fetch and display version (cache-busting)
 fetch('/listen/version.php?t='+Date.now()).then(r=>r.text()).then(v=>document.getElementById('version').textContent='v'+v.trim()).catch(()=>{});

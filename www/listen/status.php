@@ -1,6 +1,8 @@
 <?php
 
 header('Content-Type: application/json');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 
 
 function http_get_json($url) {
@@ -33,10 +35,12 @@ function basename_noext($path) {
 
 $srcUrl = "http://127.0.0.1/api/fppd/status";
 
+// Capture timing around FPP call for clock offset estimation
+$server_ms_start = intval(microtime(true) * 1000);
 $src = http_get_json($srcUrl);
-
-
-$server_ms = intval(microtime(true) * 1000);
+$server_ms_end = intval(microtime(true) * 1000);
+// Midpoint is best estimate of when pos_ms was valid
+$server_ms = intval(($server_ms_start + $server_ms_end) / 2);
 
 
 if ($src === null) {
@@ -128,6 +132,10 @@ echo json_encode([
   "mp3_url" => $mp3_url,
 
   "server_ms" => $server_ms,
+
+  "server_ms_start" => $server_ms_start,
+
+  "server_ms_end" => $server_ms_end,
 
 
   "debug_src" => $srcUrl,
