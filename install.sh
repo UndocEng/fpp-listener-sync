@@ -37,7 +37,10 @@ info "Checking Python websockets package..."
 
 if ! python3 -c "import websockets" 2>/dev/null; then
   info "Installing websockets package..."
-  pip3 install websockets || sudo pip3 install websockets || fail "Could not install Python websockets package"
+  sudo apt install -y python3-websockets 2>/dev/null || \
+    python3 -m pip install websockets 2>/dev/null || \
+    sudo python3 -m pip install websockets --break-system-packages 2>/dev/null || \
+    fail "Could not install Python websockets package"
 fi
 
 ok "Python websockets package available"
