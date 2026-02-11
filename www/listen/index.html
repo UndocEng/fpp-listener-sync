@@ -128,7 +128,7 @@ debugCheck=document.getElementById('debugCheck'),
 debugBox=document.getElementById('debugBox');
 
 // --- State ---
-let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0;
+let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0, settleUntil=0;
 
 // --- WebSocket ---
 const WS_RECONNECT_MS=2000;
@@ -423,6 +423,7 @@ async function sync(msg){
     audio.currentTime=Math.max(0,Math.min(audio.duration||999999,targetSec));
     needInitialSeek=false;
     posHistory=[];
+    settleUntil=Date.now()+1500;
     return;
   }
 
@@ -431,25 +432,33 @@ async function sync(msg){
     return;
   }
 
-  // Emergency seek if very far off (>250ms) - throttle to once per second
-  if(Math.abs(errMs)>250){
+  // After a seek, let the browser settle before making corrections
+  if(Date.now()<settleUntil){
+    audio.playbackRate=1.0;
+    return;
+  }
+
+  // Emergency seek if very far off (>500ms) - throttle to once per 2 seconds
+  if(Math.abs(errMs)>500){
     const now=Date.now();
-    if(now-lastSeekMs>1000){
+    if(now-lastSeekMs>2000){
       audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
       lastSeekMs=now;
+      posHistory=[];
+      settleUntil=now+1500;
     }
     audio.playbackRate=1.0;
     return;
   }
 
-  // Lock at 1.0 if close enough (<20ms)
-  if(Math.abs(errMs)<20){
+  // Lock at 1.0 if close enough (<30ms)
+  if(Math.abs(errMs)<30){
     audio.playbackRate=1.0;
     return;
   }
 
   // Proportional control: ±2% max adjustment
-  const adjustment=errMs*0.0005;
+  const adjustment=errMs*0.0003;
   audio.playbackRate=clamp(1.0+adjustment,0.98,1.02);
 }
 
