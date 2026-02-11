@@ -451,15 +451,18 @@ async function sync(msg){
     return;
   }
 
-  // Lock at 1.0 if close enough (<50ms)
-  if(Math.abs(avgErr2s)<50){
+  // Lock at 1.0 if close enough (<40ms)
+  if(Math.abs(errMs)<40){
     audio.playbackRate=1.0;
     return;
   }
 
-  // Proportional control using 2s average error (smoother than instantaneous)
-  // ±2% max adjustment, gain 0.0002
-  const adjustment=avgErr2s*0.0002;
+  // Non-linear (quadratic) proportional control
+  // Gentle near dead zone, stronger further out - prevents overshoot
+  // 50ms→0.5%, 75ms→1.1%, 100ms+→2% (clamped)
+  const sign=errMs>0?1:-1;
+  const absErr=Math.abs(errMs);
+  const adjustment=sign*absErr*absErr*0.000002;
   audio.playbackRate=clamp(1.0+adjustment,0.98,1.02);
 }
 
