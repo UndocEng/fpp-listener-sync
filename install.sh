@@ -29,7 +29,18 @@ info "Checking prerequisites..."
 
 php -v >/dev/null 2>&1 || fail "PHP is not installed."
 
+python3 --version >/dev/null 2>&1 || fail "Python3 is not installed."
+
 ok "Prerequisites OK"
+
+info "Checking Python websockets package..."
+
+if ! python3 -c "import websockets" 2>/dev/null; then
+  info "Installing websockets package..."
+  pip3 install websockets || sudo pip3 install websockets || fail "Could not install Python websockets package"
+fi
+
+ok "Python websockets package available"
 
 info "Checking hostapd and dnsmasq..."
 
@@ -158,9 +169,23 @@ sudo mkdir -p "$LISTEN_SYNC"
 
 sudo cp "$SCRIPT_DIR/config/hostapd-listener.conf" "$LISTEN_SYNC/hostapd-listener.conf"
 
+sudo cp "$SCRIPT_DIR/server/ws-sync-server.py" "$LISTEN_SYNC/ws-sync-server.py"
+
 sudo chown -R fpp:fpp "$LISTEN_SYNC"
 
 ok "Listener-sync configs deployed"
+
+info "Installing WebSocket sync beacon service..."
+
+sudo cp "$SCRIPT_DIR/config/ws-sync.service" /etc/systemd/system/ws-sync.service
+
+sudo systemctl daemon-reload
+
+sudo systemctl enable ws-sync
+
+sudo systemctl restart ws-sync
+
+ok "ws-sync service installed and started"
 
 info "Configuring wlan1 static IP..."
 
@@ -341,6 +366,13 @@ systemctl is-active --quiet dnsmasq && ok "dnsmasq: running" || { printf '%b\n' 
 IP=$(ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}')
 
 [ "$IP" = "192.168.50.1/24" ] && ok "wlan1: 192.168.50.1/24" || { printf '%b\n' "${RED}[FAIL] wlan1 IP: $IP${NC}"; ERRORS=$((ERRORS+1)); }
+
+systemctl is-active --quiet ws-sync && ok "ws-sync: running" || { printf '%b\n' "${RED}[FAIL] ws-sync${NC}"; ERRORS=$((ERRORS+1)); }
+
+# WebSocket server responds with HTTP 426 (Upgrade Required) to plain HTTP - this confirms it's running
+WS_HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ 2>/dev/null)
+
+[ "$WS_HTTP" = "426" ] && ok "ws-sync port 8080: responding" || { printf '%b\n' "${RED}[FAIL] ws-sync port 8080: HTTP $WS_HTTP${NC}"; ERRORS=$((ERRORS+1)); }
 
 HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/ 2>/dev/null)
 

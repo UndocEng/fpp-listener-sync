@@ -74,7 +74,11 @@
 
   <div id="debugBox" class="box hidden">
 
-    <div><b>Poll:</b> <span id="poll">not started</span></div>
+    <div><b>Transport:</b> <span id="transport">-</span></div>
+
+    <div><b>RTT:</b> <span id="rtt">-</span> ms</div>
+
+    <div><b>Clock Offset:</b> <span id="offset">-</span> ms</div>
 
     <div><b>Sequence:</b> <span id="seq">-</span></div>
 
@@ -84,21 +88,15 @@
 
     <div><b>Local:</b> <span id="local">-</span> ms</div>
 
-    <div><b>Error (instant):</b> <span id="err">-</span> ms</div>
-
-    <div><b>Error (averaged):</b> <span id="avgErrUsed">-</span> ms</div>
+    <div><b>Error:</b> <span id="err">-</span> ms</div>
 
     <div><b>Avg Error (2s):</b> <span id="avgErr2s">-</span> ms</div>
 
     <div><b>Avg Error (all):</b> <span id="avgErrAll">-</span> ms</div>
 
-    <div><b>Initial Error (0.5s):</b> <span id="initErr">-</span> ms</div>
-
     <div><b>Playback Rate:</b> <span id="playRate">1.0</span></div>
 
     <div><b>Buffered:</b> <span id="buffered">-</span> s</div>
-
-    <div><b>Ready State:</b> <span id="readyState">-</span></div>
 
   </div>
 
@@ -106,90 +104,325 @@
 
 <script>
 
-const enableBtn=document.getElementById('enableBtn'),audio=document.getElementById('audio'),idleMsg=document.getElementById('idleMsg'),nowPlaying=document.getElementById('nowPlaying'),trackName=document.getElementById('trackName'),pollEl=document.getElementById('poll'),fetchErrEl=document.getElementById('fetchErr'),playErrEl=document.getElementById('playErr'),seqEl=document.getElementById('seq'),stateEl=document.getElementById('state'),targetEl=document.getElementById('target'),localEl=document.getElementById('local'),errEl=document.getElementById('err'),avgErrUsedEl=document.getElementById('avgErrUsed'),avgErr2sEl=document.getElementById('avgErr2s'),avgErrAllEl=document.getElementById('avgErrAll'),initErrEl=document.getElementById('initErr'),playRateEl=document.getElementById('playRate'),bufferedEl=document.getElementById('buffered'),readyStateEl=document.getElementById('readyState'),debugCheck=document.getElementById('debugCheck'),debugBox=document.getElementById('debugBox');
+// --- DOM References ---
+const enableBtn=document.getElementById('enableBtn'),
+audio=document.getElementById('audio'),
+idleMsg=document.getElementById('idleMsg'),
+nowPlaying=document.getElementById('nowPlaying'),
+trackName=document.getElementById('trackName'),
+pollEl=document.getElementById('transport'),
+fetchErrEl=document.getElementById('fetchErr'),
+playErrEl=document.getElementById('playErr'),
+seqEl=document.getElementById('seq'),
+stateEl=document.getElementById('state'),
+targetEl=document.getElementById('target'),
+localEl=document.getElementById('local'),
+errEl=document.getElementById('err'),
+avgErr2sEl=document.getElementById('avgErr2s'),
+avgErrAllEl=document.getElementById('avgErrAll'),
+playRateEl=document.getElementById('playRate'),
+bufferedEl=document.getElementById('buffered'),
+rttEl=document.getElementById('rtt'),
+offsetEl=document.getElementById('offset'),
+debugCheck=document.getElementById('debugCheck'),
+debugBox=document.getElementById('debugBox');
 
-let enabled=false,currentBase="",pollTimer=null,haveMetadata=false,needInitialSeek=false;
+// --- State ---
+let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false;
 
-function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+// --- WebSocket ---
+const WS_PORT=8080;
+const WS_RECONNECT_MS=2000;
+const WS_PING_INTERVAL_MS=3000;
+const HTTP_POLL_MS=250;
 
-debugCheck.addEventListener('change',()=>{debugBox.classList.toggle('hidden',!debugCheck.checked);});
+let ws=null, wsConnected=false, wsPingTimer=null, wsReconnectTimer=null;
 
-audio.addEventListener('loadedmetadata',()=>{haveMetadata=true;});
+// --- Clock offset estimation ---
+let clockOffset=0, clockOffsetValid=false;
+const RTT_HISTORY_SIZE=5;
+let rttHistory=[];
 
-audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio file detected";});
-
-enableBtn.onclick=()=>{enabled=true;enableBtn.disabled=true;enableBtn.textContent="Audio Enabled";pollEl.textContent="POLLING...";if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(pollOnce,250);pollOnce();try{audio.muted=true;const p=audio.play();if(p&&typeof p.then==='function'){p.then(()=>{audio.pause();audio.currentTime=0;audio.muted=false;}).catch((e)=>{audio.muted=false;});}else{audio.muted=false;}}catch(e){audio.muted=false;}};
-
-async function pollOnce(){
-if(!enabled)return;
-const t0=Date.now();
-try{
-const url=`${location.origin}/listen/status.php?ts=${Date.now()}`;
-const r=await fetch(url,{cache:'no-store'});
-if(!r.ok)throw new Error(`HTTP ${r.status}`);
-const msg=await r.json();
-pollEl.textContent=`ok (${Date.now()-t0} ms)`;
-fetchErrEl.textContent="";
-sync(msg);
-}catch(e){
-pollEl.textContent="FAILED";
-fetchErrEl.textContent="Fetch error: "+(e?.message||e);
-}
-}
-
-async function safePlay(){try{const p=audio.play();if(p&&typeof p.catch==='function'){await p;}playErrEl.textContent="";}catch(e){playErrEl.textContent="Audio playback blocked: "+(e?.message||e);}}
-
-// Position averaging for smooth sync
+// --- Position averaging ---
 let posHistory=[];
 const POS_HISTORY_SIZE=2;
 
-// Error tracking for statistics
-let errHistory2s=[];
-let errHistoryAll=[];
-let errHistoryInit=[];
-let initErrCalculated=false;
-const ERR_2S_SIZE=8; // 2 seconds at 250ms poll rate
-const ERR_INIT_SIZE=2; // First 500ms (2 polls at 250ms)
+// --- Error tracking ---
+let errHistory2s=[], errHistoryAll=[];
+const ERR_2S_SIZE=8;
 
-async function sync(msg){seqEl.textContent=msg.base||"-";stateEl.textContent=msg.state||"-";targetEl.textContent=msg.pos_ms??"-";if(msg.state==="stop"||!msg.base){idleMsg.classList.remove('hidden');nowPlaying.classList.add('hidden');playErrEl.textContent="";}else{idleMsg.classList.add('hidden');nowPlaying.classList.remove('hidden');trackName.textContent=msg.base;}if(msg.base&&msg.base!==currentBase){currentBase=msg.base;haveMetadata=false;needInitialSeek=true;audio.playbackRate=1.0;audio.src=msg.mp3_url||"";audio.load();posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;}if(msg.state==="stop"){audio.pause();audio.currentTime=0;audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;return;}if(msg.state==="pause"){audio.pause();audio.playbackRate=1.0;posHistory=[];errHistory2s=[];errHistoryAll=[];errHistoryInit=[];initErrCalculated=false;needInitialSeek=false;return;}// Simple time calculation
-const nowMs=Date.now();
-let serverMs=Number(msg.server_ms);
-if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){serverMs=nowMs;}
-const smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);
-posHistory.push(smoothPosMs);
-if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();
-const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;
-const targetSec=avgPosMs/1000.0;const localSec=audio.currentTime||0;const errMs=(targetSec-localSec)*1000.0;localEl.textContent=Math.round(localSec*1000);errEl.textContent=Math.round(errMs);errHistory2s.push(errMs);if(errHistory2s.length>ERR_2S_SIZE)errHistory2s.shift();errHistoryAll.push(errMs);const avgErr2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length):0;const avgErrAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;avgErr2sEl.textContent=Math.round(avgErr2s);avgErrAllEl.textContent=Math.round(avgErrAll);if(!initErrCalculated&&errHistoryInit.length<ERR_INIT_SIZE){errHistoryInit.push(errMs);}if(!initErrCalculated&&errHistoryInit.length>=ERR_INIT_SIZE){const avgInitErr=errHistoryInit.reduce((a,b)=>a+b,0)/errHistoryInit.length;initErrEl.textContent=Math.round(avgInitErr);initErrCalculated=true;}let bufferedSec=0;if(audio.buffered.length>0){bufferedSec=audio.buffered.end(audio.buffered.length-1)-localSec;}bufferedEl.textContent=bufferedSec.toFixed(1);playRateEl.textContent=audio.playbackRate.toFixed(3);readyStateEl.textContent=audio.readyState;if(audio.paused)await safePlay();// Initial seek when track starts
-if(needInitialSeek&&!audio.paused){
-audio.currentTime=Math.max(0,Math.min(audio.duration||999999,targetSec));
-needInitialSeek=false;
-posHistory=[];
-return;
+// --- Helpers ---
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+
+debugCheck.addEventListener('change',()=>{debugBox.classList.toggle('hidden',!debugCheck.checked);});
+audio.addEventListener('loadedmetadata',()=>{haveMetadata=true;});
+audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio file detected";});
+
+// === WebSocket Connection ===
+
+function connectWebSocket(){
+  if(ws&&(ws.readyState===WebSocket.CONNECTING||ws.readyState===WebSocket.OPEN))return;
+  const wsUrl='ws://'+location.hostname+':'+WS_PORT;
+  try{ws=new WebSocket(wsUrl);}catch(e){startHttpFallback();return;}
+
+  ws.onopen=()=>{
+    wsConnected=true;
+    stopHttpPolling();
+    pollEl.textContent='WebSocket connected';
+    fetchErrEl.textContent='';
+    wsPingTimer=setInterval(sendPing,WS_PING_INTERVAL_MS);
+    sendPing();
+  };
+
+  ws.onmessage=(event)=>{
+    try{
+      const data=JSON.parse(event.data);
+      if(data.type==='pong'){
+        handlePong(data);
+      }else if(data.state!==undefined){
+        sync(data);
+      }
+    }catch(e){}
+  };
+
+  ws.onclose=()=>{
+    wsConnected=false;
+    if(wsPingTimer){clearInterval(wsPingTimer);wsPingTimer=null;}
+    pollEl.textContent='WS disconnected, HTTP fallback';
+    startHttpFallback();
+    if(wsReconnectTimer)clearTimeout(wsReconnectTimer);
+    wsReconnectTimer=setTimeout(connectWebSocket,WS_RECONNECT_MS);
+  };
+
+  ws.onerror=()=>{};
 }
 
-if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){
-audio.playbackRate=1.0;
-return;
+function sendPing(){
+  if(ws&&ws.readyState===WebSocket.OPEN){
+    ws.send(JSON.stringify({type:'ping',client_ts:Date.now()}));
+  }
 }
 
-avgErrUsedEl.textContent=Math.round(errMs);
+function handlePong(data){
+  const now=Date.now();
+  const clientTs=data.client_ts;
+  const serverTs=data.server_ts;
+  const rtt=now-clientTs;
 
-// Emergency seek if very far off
-if(Math.abs(errMs)>500){
-audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
-audio.playbackRate=1.0;
-return;
+  if(rtt>0&&rtt<500){
+    rttHistory.push(rtt);
+    if(rttHistory.length>RTT_HISTORY_SIZE)rttHistory.shift();
+
+    const newOffset=serverTs-clientTs-(rtt/2);
+
+    if(!clockOffsetValid){
+      clockOffset=newOffset;
+      clockOffsetValid=true;
+    }else{
+      clockOffset=clockOffset*0.7+newOffset*0.3;
+    }
+
+    rttEl.textContent=rtt;
+    offsetEl.textContent=Math.round(clockOffset);
+  }
 }
 
-// Lock at 1.0 if close enough
-if(Math.abs(errMs)<30){
-audio.playbackRate=1.0;
-return;
+// === HTTP Fallback Polling ===
+
+function startHttpFallback(){
+  if(pollTimer)return;
+  pollTimer=setInterval(pollOnce,HTTP_POLL_MS);
+  pollOnce();
 }
 
-// Simple proportional control
-const adjustment=errMs*0.0001;
-audio.playbackRate=clamp(1.0+adjustment,0.95,1.05);
+function stopHttpPolling(){
+  if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+}
+
+async function pollOnce(){
+  if(!enabled)return;
+  const t0=Date.now();
+  try{
+    const url=location.origin+'/listen/status.php?ts='+Date.now();
+    const r=await fetch(url,{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const msg=await r.json();
+    if(!wsConnected)pollEl.textContent='HTTP ok ('+( Date.now()-t0)+' ms)';
+    fetchErrEl.textContent='';
+    sync(msg);
+  }catch(e){
+    if(!wsConnected)pollEl.textContent='HTTP FAILED';
+    fetchErrEl.textContent='Fetch error: '+(e?.message||e);
+  }
+}
+
+// === Audio Playback ===
+
+async function safePlay(){
+  try{
+    const p=audio.play();
+    if(p&&typeof p.catch==='function'){await p;}
+    playErrEl.textContent='';
+  }catch(e){
+    playErrEl.textContent='Audio playback blocked: '+(e?.message||e);
+  }
+}
+
+// === Enable Button ===
+
+enableBtn.onclick=()=>{
+  enabled=true;
+  enableBtn.disabled=true;
+  enableBtn.textContent='Audio Enabled';
+  pollEl.textContent='Connecting...';
+
+  // Try WebSocket first, HTTP polling as immediate fallback
+  connectWebSocket();
+  startHttpFallback();
+
+  // Audio unlock gesture
+  try{
+    audio.muted=true;
+    const p=audio.play();
+    if(p&&typeof p.then==='function'){
+      p.then(()=>{audio.pause();audio.currentTime=0;audio.muted=false;})
+      .catch(()=>{audio.muted=false;});
+    }else{audio.muted=false;}
+  }catch(e){audio.muted=false;}
+};
+
+// Reconnect WebSocket when page becomes visible again
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&enabled&&!wsConnected){
+    connectWebSocket();
+  }
+});
+
+// === Sync Algorithm ===
+
+async function sync(msg){
+  seqEl.textContent=msg.base||'-';
+  stateEl.textContent=msg.state||'-';
+  targetEl.textContent=msg.pos_ms??'-';
+
+  if(msg.state==='stop'||!msg.base){
+    idleMsg.classList.remove('hidden');
+    nowPlaying.classList.add('hidden');
+    playErrEl.textContent='';
+  }else{
+    idleMsg.classList.add('hidden');
+    nowPlaying.classList.remove('hidden');
+    trackName.textContent=msg.base;
+  }
+
+  // Track change
+  if(msg.base&&msg.base!==currentBase){
+    currentBase=msg.base;
+    haveMetadata=false;
+    needInitialSeek=true;
+    audio.playbackRate=1.0;
+    audio.src=msg.mp3_url||'';
+    audio.load();
+    posHistory=[];
+    errHistory2s=[];
+    errHistoryAll=[];
+  }
+
+  // Stop
+  if(msg.state==='stop'){
+    audio.pause();
+    audio.currentTime=0;
+    audio.playbackRate=1.0;
+    posHistory=[];
+    errHistory2s=[];
+    errHistoryAll=[];
+    needInitialSeek=false;
+    return;
+  }
+
+  // Pause
+  if(msg.state==='pause'){
+    audio.pause();
+    audio.playbackRate=1.0;
+    posHistory=[];
+    errHistory2s=[];
+    errHistoryAll=[];
+    needInitialSeek=false;
+    return;
+  }
+
+  // --- Time calculation with clock offset ---
+  const nowMs=Date.now();
+  let serverMs=Number(msg.server_ms);
+
+  let smoothPosMs;
+  if(clockOffsetValid){
+    // Convert client time to server time domain, then compute elapsed
+    const clientAsServerTime=nowMs+clockOffset;
+    smoothPosMs=Number(msg.pos_ms||0)+(clientAsServerTime-serverMs);
+  }else{
+    // Fallback: assume clocks are roughly aligned
+    if(!Number.isFinite(serverMs)||serverMs<1000000000000||Math.abs(nowMs-serverMs)>5*60*1000){
+      serverMs=nowMs;
+    }
+    smoothPosMs=Number(msg.pos_ms||0)+(nowMs-serverMs);
+  }
+
+  posHistory.push(smoothPosMs);
+  if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();
+  const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;
+  const targetSec=avgPosMs/1000.0;
+  const localSec=audio.currentTime||0;
+  const errMs=(targetSec-localSec)*1000.0;
+
+  // Update debug display
+  localEl.textContent=Math.round(localSec*1000);
+  errEl.textContent=Math.round(errMs);
+
+  errHistory2s.push(errMs);
+  if(errHistory2s.length>ERR_2S_SIZE)errHistory2s.shift();
+  errHistoryAll.push(errMs);
+  const avgErr2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length):0;
+  const avgErrAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;
+  avgErr2sEl.textContent=Math.round(avgErr2s);
+  avgErrAllEl.textContent=Math.round(avgErrAll);
+
+  let bufferedSec=0;
+  if(audio.buffered.length>0){bufferedSec=audio.buffered.end(audio.buffered.length-1)-localSec;}
+  bufferedEl.textContent=bufferedSec.toFixed(1);
+  playRateEl.textContent=audio.playbackRate.toFixed(3);
+
+  if(audio.paused)await safePlay();
+
+  // Initial seek when track starts
+  if(needInitialSeek&&!audio.paused){
+    audio.currentTime=Math.max(0,Math.min(audio.duration||999999,targetSec));
+    needInitialSeek=false;
+    posHistory=[];
+    return;
+  }
+
+  if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){
+    audio.playbackRate=1.0;
+    return;
+  }
+
+  // Emergency seek if very far off
+  if(Math.abs(errMs)>500){
+    audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
+    audio.playbackRate=1.0;
+    return;
+  }
+
+  // Lock at 1.0 if close enough
+  if(Math.abs(errMs)<30){
+    audio.playbackRate=1.0;
+    return;
+  }
+
+  // Simple proportional control
+  const adjustment=errMs*0.0001;
+  audio.playbackRate=clamp(1.0+adjustment,0.95,1.05);
 }
 
 // Fetch and display version (cache-busting)
