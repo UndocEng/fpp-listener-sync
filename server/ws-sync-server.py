@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FPP WebSocket Sync Beacon v1.7.3
+FPP WebSocket Sync Beacon v1.7.5
 Polls FPP API every 100ms, broadcasts position to all WebSocket clients.
 Provides ping/pong for RTT-based clock offset estimation.
 Logs client sync reports to /home/fpp/listen-sync/sync.log.
@@ -70,9 +70,10 @@ def write_sync_log(client_ip, data):
         local = data.get("local", 0)
         err = data.get("err", 0)
         rate = data.get("rate", 1.0)
+        eff = data.get("eff", 0)
         offset = data.get("offset", 0)
         track = data.get("track", "")
-        line = f"{ts} [{client_ip}] {event:12s} fpp={fpp:>7d} target={target:>7d} local={local:>7d} err={err:>5d}ms rate={rate:.4f} offset={offset:>4d}ms\n"
+        line = f"{ts} [{client_ip}] {event:12s} fpp={fpp:>7d} target={target:>7d} local={local:>7d} err={err:>5d}ms rate={rate:.4f} eff={eff:.3f} offset={offset:>4d}ms\n"
 
         with open(SYNC_LOG_PATH, "a") as f:
             f.write(line)

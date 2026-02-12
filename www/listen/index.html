@@ -96,6 +96,8 @@
 
     <div><b>Playback Rate:</b> <span id="playRate">1.0</span></div>
 
+    <div><b>Effective Rate:</b> <span id="effRate">-</span></div>
+
     <div><b>Buffered:</b> <span id="buffered">-</span> s</div>
 
   </div>
@@ -129,6 +131,7 @@ errEl=document.getElementById('err'),
 avgErr2sEl=document.getElementById('avgErr2s'),
 avgErrAllEl=document.getElementById('avgErrAll'),
 playRateEl=document.getElementById('playRate'),
+effRateEl=document.getElementById('effRate'),
 bufferedEl=document.getElementById('buffered'),
 rttEl=document.getElementById('rtt'),
 offsetEl=document.getElementById('offset'),
@@ -138,6 +141,7 @@ debugBox=document.getElementById('debugBox');
 // --- State ---
 let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0, settleUntil=0, syncBusy=false;
 let logFrozen=false, wasPlaying=false;
+let pendingMsg=null, playAttempting=false;
 
 // --- WebSocket ---
 const WS_RECONNECT_MS=2000;
@@ -157,6 +161,16 @@ let offsetHistory=[];
 let errHistory2s=[], errHistoryAll=[];
 const ERR_2S_SIZE=8;
 let logThrottle=0;
+
+// --- Rate control throttle ---
+// Mobile audio engines can't apply rapid rate changes (10Hz).
+// Update rate every 500ms using averaged error for stable correction.
+let lastRateSetMs=0;
+const RATE_UPDATE_MS=500;
+
+// --- Effective rate measurement ---
+// Measures actual audio advance vs wall clock to verify browser honors playbackRate
+let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
 
 // --- Helpers ---
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
@@ -199,6 +213,7 @@ function sendReport(event,errMs,rate){
     local:Math.round(lastLocalMs),
     err:Math.round(errMs||0),
     rate:Number((rate||1.0).toFixed(4)),
+    eff:Number((lastEffRate||0).toFixed(3)),
     offset:Math.round(clockOffset),
     track:currentBase||''
   }));
@@ -394,10 +409,18 @@ document.addEventListener('visibilitychange',()=>{
 // === Sync Algorithm ===
 
 async function sync(msg){
-  // FIX #1: Sync guard - prevent overlapping async calls from fighting
+  // Queue latest message instead of dropping - prevents stale drift
+  // when syncInner is blocked (e.g. during safePlay)
+  pendingMsg=msg;
   if(syncBusy)return;
   syncBusy=true;
-  try{await syncInner(msg);}finally{syncBusy=false;}
+  try{
+    while(pendingMsg){
+      const m=pendingMsg;
+      pendingMsg=null;
+      await syncInner(m);
+    }
+  }finally{syncBusy=false;}
 }
 
 async function syncInner(msg){
@@ -431,6 +454,8 @@ async function syncInner(msg){
     audio.load();
     errHistory2s=[];
     errHistoryAll=[];
+    lastRateSetMs=0;
+    effRateWallMs=0;
   }
 
   // Stop
@@ -469,8 +494,12 @@ async function syncInner(msg){
 
   wasPlaying=true;
 
-  // Start playback if needed (do this BEFORE time calculation to avoid stale reads)
-  if(audio.paused){log('PLAY resuming (was paused)');await safePlay();}
+  // Start playback if needed - fire-and-forget to avoid blocking sync loop
+  if(audio.paused&&!playAttempting){
+    log('PLAY resuming (was paused)');
+    playAttempting=true;
+    safePlay().finally(()=>{playAttempting=false;});
+  }
 
   // --- Time calculation with clock offset ---
   const nowMs=Date.now();
@@ -542,6 +571,8 @@ async function syncInner(msg){
     needInitialSeek=false;
     errHistory2s=[];
     errHistoryAll=[];
+    lastRateSetMs=0;
+    effRateWallMs=0;
     settleUntil=Date.now()+1500;
     return;
   }
@@ -564,29 +595,46 @@ async function syncInner(msg){
       lastSeekMs=now;
       errHistory2s=[];
       errHistoryAll=[];
+      lastRateSetMs=0;
+      effRateWallMs=0;
       settleUntil=now+2000;
     }
     audio.playbackRate=1.0;
     return;
   }
 
-  // Dead zone: if within 10ms, playback rate stays exactly 1.0
-  if(Math.abs(errMs)<10){
-    if(audio.playbackRate!==1.0)log('DEADZONE err='+Math.round(errMs)+'ms rate→1.000');
-    audio.playbackRate=1.0;
-    sendReport('RATE',errMs,1.0);
-    return;
-  }
+  // Rate control: update every 500ms using averaged error.
+  // Mobile audio engines can't apply rate changes at 10Hz - they get ignored.
+  // Throttling to 2Hz with averaged error gives stable, effective correction.
+  const rateNow=Date.now();
+  if(rateNow-lastRateSetMs>=RATE_UPDATE_MS){
+    // Measure effective rate: actual audio advance vs wall clock over last interval
+    if(effRateWallMs>0){
+      const dWall=rateNow-effRateWallMs;
+      const dLocal=(localSec*1000)-effRateLocalMs;
+      if(dWall>100){
+        lastEffRate=dLocal/dWall;
+        effRateEl.textContent=lastEffRate.toFixed(3);
+      }
+    }
+    effRateWallMs=rateNow;
+    effRateLocalMs=localSec*1000;
 
-  // Rate control handles ALL errors from 10ms to 2000ms.
-  // Gain 0.0002: 50ms→1%, 250ms→5%(clamped), 500ms→5%(clamped)
-  // Clamp ±5% - fast enough to correct 500ms in ~10s
-  // Rate stays near 1.000 once converged (small errors → tiny adjustments)
-  const adjustment=errMs*0.0002;
-  const newRate=clamp(1.0+adjustment,0.95,1.05);
-  audio.playbackRate=newRate;
-  sendReport('RATE',errMs,newRate);
-  if(++logThrottle%10===0)log('RATE err='+Math.round(errMs)+'ms rate='+newRate.toFixed(4));
+    lastRateSetMs=rateNow;
+    // Use 0.8s average error for smooth control (no dead-zone oscillation)
+    const rateErr=errHistory2s.length>=3
+      ?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length)
+      :errMs;
+    if(Math.abs(rateErr)<3){
+      audio.playbackRate=1.0;
+    }else{
+      // Gain 0.0003: 30ms→0.9%, 100ms→3%, 170ms→5%(clamped)
+      const adjustment=rateErr*0.0003;
+      audio.playbackRate=clamp(1.0+adjustment,0.95,1.05);
+    }
+    if(++logThrottle%4===0)log('RATE err='+Math.round(errMs)+'ms avg='+Math.round(rateErr)+'ms rate='+audio.playbackRate.toFixed(4)+' eff='+lastEffRate.toFixed(3));
+  }
+  sendReport('RATE',errMs,audio.playbackRate);
 }
 
 // Fetch and display version (cache-busting)
