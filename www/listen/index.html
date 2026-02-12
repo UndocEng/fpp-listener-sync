@@ -100,6 +100,8 @@
 
     <div><b>Last Correction:</b> <span id="lastCorrection">-</span></div>
 
+    <div><b>Play Latency:</b> <span id="playLatency">0</span> ms</div>
+
     <div><b>Threshold:</b> <select id="thresholdSelect" style="background:#222;color:#aaa;border:1px solid #555;font-size:13px;"><option value="200">200 ms</option><option value="300" selected>300 ms</option><option value="500">500 ms</option></select></div>
 
   </div>
@@ -135,6 +137,7 @@ avgErrAllEl=document.getElementById('avgErrAll'),
 effRateEl=document.getElementById('effRate'),
 bufferedEl=document.getElementById('buffered'),
 lastCorrectionEl=document.getElementById('lastCorrection'),
+playLatencyEl=document.getElementById('playLatency'),
 rttEl=document.getElementById('rtt'),
 offsetEl=document.getElementById('offset'),
 debugCheck=document.getElementById('debugCheck'),
@@ -176,6 +179,18 @@ let lastSampledFppPos=-1; // only sample error when FPP pos_ms changes (avoids 1
 
 // --- Effective rate measurement ---
 let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
+
+// --- Play-ahead latency compensation ---
+// Measures how long play() takes to actually start audio output, then
+// fires play() that much earlier on subsequent scheduled starts.
+const PLAY_LATENCY_KEY='fpp-play-latency';
+let playLatencyMs=0; // estimated play() startup latency for this device
+let playCallWallMs=0; // wall time when play() was called (0 = not measuring)
+let playCallAudioPos=0; // audio.currentTime when play() was called
+try{
+  const saved=localStorage.getItem(PLAY_LATENCY_KEY);
+  if(saved){const v=Number(saved);if(v>=0&&v<1000)playLatencyMs=v;}
+}catch(e){}
 
 // --- Threshold persistence ---
 const THRESHOLD_KEY='fpp-sync-threshold';
@@ -564,6 +579,7 @@ async function syncInner(msg){
     const ago=Math.round((nowMs-lastCorrectionMs)/1000);
     lastCorrectionEl.textContent=ago+'s ago';
   }
+  playLatencyEl.textContent=Math.round(playLatencyMs);
 
   // --- Scheduled start: waiting for metadata before we can seek ---
   if(needInitialSeek&&haveMetadata){
@@ -591,15 +607,19 @@ async function syncInner(msg){
       return;
     }
 
-    if(targetMs>=waitingForMs){
-      // FPP has reached our position — GO!
+    const playAheadMs=playLatencyMs; // fire play() this much before FPP arrives
+    if(targetMs>=(waitingForMs-playAheadMs)){
+      // FPP is close enough — fire play() early to compensate for startup latency
       awaitingStart=false;
-      log('PLAY! landed='+Math.round(waitingForMs)+'ms fpp='+Math.round(targetMs)+'ms');
+      log('PLAY! landed='+Math.round(waitingForMs)+'ms fpp='+Math.round(targetMs)+'ms ahead='+Math.round(playAheadMs)+'ms');
       lastCheckMs=nowMs;
       checkSamples=[];
       settleUntil=nowMs+3000;
       effRateWallMs=nowMs;
       effRateLocalMs=scheduledStartTarget*1000;
+      // Start measuring play() latency
+      playCallWallMs=Date.now();
+      playCallAudioPos=audio.currentTime;
       playAttempting=true;
       safePlay().finally(()=>{playAttempting=false;});
       sendReport('START',0,1.0);
@@ -613,6 +633,17 @@ async function syncInner(msg){
 
   // --- Settle period after play starts ---
   if(nowMs<settleUntil){
+    // Measure play() latency: detect when audio.currentTime actually advances
+    if(playCallWallMs>0&&audio.currentTime!==playCallAudioPos){
+      const measuredMs=Date.now()-playCallWallMs;
+      // EWMA: blend new measurement with stored estimate (alpha=0.5)
+      playLatencyMs=playLatencyMs>0?(playLatencyMs*0.5+measuredMs*0.5):measuredMs;
+      // Clamp to sane range (0-500ms)
+      playLatencyMs=clamp(playLatencyMs,0,500);
+      log('PLAY_LATENCY measured='+measuredMs+'ms estimate='+Math.round(playLatencyMs)+'ms');
+      try{localStorage.setItem(PLAY_LATENCY_KEY,Math.round(playLatencyMs).toString());}catch(e){}
+      playCallWallMs=0; // done measuring
+    }
     errEl.textContent='(settling)';
     if(++logThrottle%10===0)log('SETTLE remaining='+(settleUntil-nowMs)+'ms');
     return;
