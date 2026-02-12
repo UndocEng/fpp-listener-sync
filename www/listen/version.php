@@ -3,6 +3,7 @@ header('Content-Type: text/plain');
 
 // Try multiple possible paths for VERSION file
 $paths = [
+    __DIR__ . '/VERSION',
     '/home/fpp/fpp-listener-sync/VERSION',
     __DIR__ . '/../../VERSION',
     '../VERSION'

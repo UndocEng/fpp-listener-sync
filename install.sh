@@ -21,6 +21,12 @@ ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
 
 fail()  { printf '%b\n' "${RED}[FAIL]${NC} $1"; exit 1; }
 
+VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "unknown")
+
+echo ""
+info "FPP Listener Sync - v${VERSION}"
+echo ""
+
 info "Checking prerequisites..."
 
 [ -d "$APACHE_ROOT" ] || fail "Apache docroot $APACHE_ROOT not found. Is this an FPP system?"
@@ -29,7 +35,21 @@ info "Checking prerequisites..."
 
 php -v >/dev/null 2>&1 || fail "PHP is not installed."
 
+python3 --version >/dev/null 2>&1 || fail "Python3 is not installed."
+
 ok "Prerequisites OK"
+
+info "Checking Python websockets package..."
+
+if ! python3 -c "import websockets" 2>/dev/null; then
+  info "Installing websockets package..."
+  sudo apt install -y python3-websockets 2>/dev/null || \
+    python3 -m pip install websockets 2>/dev/null || \
+    sudo python3 -m pip install websockets --break-system-packages 2>/dev/null || \
+    fail "Could not install Python websockets package"
+fi
+
+ok "Python websockets package available"
 
 info "Checking hostapd and dnsmasq..."
 
@@ -71,6 +91,8 @@ sudo cp "$SCRIPT_DIR/www/listen/detect.php" "$LISTEN_WEB/detect.php"
 
 sudo cp "$SCRIPT_DIR/www/listen/logo.png" "$LISTEN_WEB/logo.png"
 
+sudo cp "$SCRIPT_DIR/VERSION" "$LISTEN_WEB/VERSION"
+
 sudo cp "$SCRIPT_DIR/www/qrcode.html" "$APACHE_ROOT/qrcode.html"
 
 sudo cp "$SCRIPT_DIR/www/print-sign.html" "$APACHE_ROOT/print-sign.html"
@@ -104,6 +126,10 @@ ok "Captive portal redirect configured"
 info "Enabling Apache mod_rewrite and AllowOverride..."
 
 sudo a2enmod rewrite 2>/dev/null || ok "mod_rewrite already enabled"
+
+sudo a2enmod proxy 2>/dev/null || ok "mod_proxy already enabled"
+
+sudo a2enmod proxy_wstunnel 2>/dev/null || ok "mod_proxy_wstunnel already enabled"
 
 sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/apache2/conf-available/listener.conf 2>/dev/null || sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/httpd/conf.d/listener.conf 2>/dev/null || true
 
@@ -158,9 +184,23 @@ sudo mkdir -p "$LISTEN_SYNC"
 
 sudo cp "$SCRIPT_DIR/config/hostapd-listener.conf" "$LISTEN_SYNC/hostapd-listener.conf"
 
+sudo cp "$SCRIPT_DIR/server/ws-sync-server.py" "$LISTEN_SYNC/ws-sync-server.py"
+
 sudo chown -R fpp:fpp "$LISTEN_SYNC"
 
 ok "Listener-sync configs deployed"
+
+info "Installing WebSocket sync beacon service..."
+
+sudo cp "$SCRIPT_DIR/config/ws-sync.service" /etc/systemd/system/ws-sync.service
+
+sudo systemctl daemon-reload
+
+sudo systemctl enable ws-sync
+
+sudo systemctl restart ws-sync
+
+ok "ws-sync service installed and started"
 
 info "Configuring wlan1 static IP..."
 
@@ -341,6 +381,13 @@ systemctl is-active --quiet dnsmasq && ok "dnsmasq: running" || { printf '%b\n' 
 IP=$(ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}')
 
 [ "$IP" = "192.168.50.1/24" ] && ok "wlan1: 192.168.50.1/24" || { printf '%b\n' "${RED}[FAIL] wlan1 IP: $IP${NC}"; ERRORS=$((ERRORS+1)); }
+
+systemctl is-active --quiet ws-sync && ok "ws-sync: running" || { printf '%b\n' "${RED}[FAIL] ws-sync${NC}"; ERRORS=$((ERRORS+1)); }
+
+# WebSocket server responds with HTTP 426 (Upgrade Required) to plain HTTP - this confirms it's running
+WS_HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ 2>/dev/null)
+
+[ "$WS_HTTP" = "426" ] && ok "ws-sync port 8080: responding" || { printf '%b\n' "${RED}[FAIL] ws-sync port 8080: HTTP $WS_HTTP${NC}"; ERRORS=$((ERRORS+1)); }
 
 HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/ 2>/dev/null)
 

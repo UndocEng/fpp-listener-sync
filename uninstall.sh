@@ -23,6 +23,10 @@ echo ""
 
 info "Stopping services..."
 
+sudo systemctl stop ws-sync 2>/dev/null || true
+sudo systemctl disable ws-sync 2>/dev/null || true
+sudo rm -f /etc/systemd/system/ws-sync.service
+
 sudo systemctl stop listener-ap 2>/dev/null || true
 sudo systemctl disable listener-ap 2>/dev/null || true
 sudo rm -f /etc/systemd/system/listener-ap.service

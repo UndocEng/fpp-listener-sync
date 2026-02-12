@@ -36,11 +36,12 @@ function basename_noext($path) {
 $srcUrl = "http://127.0.0.1/api/fppd/status";
 
 // Capture timing around FPP call for clock offset estimation
-$server_ms_start = intval(microtime(true) * 1000);
+// Use round() not intval() - intval() overflows on 32-bit PHP (Pi 3B)
+$server_ms_start = round(microtime(true) * 1000);
 $src = http_get_json($srcUrl);
-$server_ms_end = intval(microtime(true) * 1000);
+$server_ms_end = round(microtime(true) * 1000);
 // Midpoint is best estimate of when pos_ms was valid
-$server_ms = intval(($server_ms_start + $server_ms_end) / 2);
+$server_ms = round(($server_ms_start + $server_ms_end) / 2);
 
 
 if ($src === null) {

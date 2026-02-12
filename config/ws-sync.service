@@ -1,0 +1,25 @@
+[Unit]
+Description=FPP WebSocket Sync Beacon
+After=network.target apache2.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=fpp
+Group=fpp
+ExecStart=/usr/bin/python3 /home/fpp/listen-sync/ws-sync-server.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ws-sync
+
+# Resource limits for Pi 3B safety
+MemoryMax=64M
+CPUQuota=25%
+
+# Security hardening
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
