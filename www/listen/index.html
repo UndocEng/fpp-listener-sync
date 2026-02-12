@@ -70,7 +70,7 @@
 
   <div class="err" id="playErr"></div>
 
-  <div class="debug-toggle"><label><input type="checkbox" id="debugCheck" /> Show Debug Data</label> &nbsp; <label><input type="checkbox" id="logCheck" /> Enable Logging</label></div>
+  <div class="debug-toggle"><label><input type="checkbox" id="debugCheck" /> Debug</label> &nbsp; <label><input type="checkbox" id="logCheck" /> Client Log</label> &nbsp; <label><input type="checkbox" id="serverLogCheck" /> Server Log</label></div>
 
   <div id="debugBox" class="box hidden">
 
@@ -213,11 +213,13 @@ function log(msg){
   logBox.scrollTop=logBox.scrollHeight;
 }
 
-// --- Server-side reporting (always on, minimal overhead) ---
+// --- Server-side reporting (gated by checkbox) ---
 const REPORT_INTERVAL_MS=2000;
 let lastReportMs=0;
 let lastRawPosMs=0, lastTargetMs=0, lastLocalMs=0;
+const serverLogCheck=document.getElementById('serverLogCheck');
 function sendReport(event,errMs,rate){
+  if(!serverLogCheck.checked)return;
   if(!ws||ws.readyState!==WebSocket.OPEN)return;
   const now=Date.now();
   const immediate=event==='START'||event==='CORRECTION'||event==='TRACK'||event==='INITIAL_SEEK'||event==='STOP';
