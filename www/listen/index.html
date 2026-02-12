@@ -385,27 +385,20 @@ async function syncInner(msg){
   const serverMs=Number(msg.server_ms);
   const rawPosMs=Number(msg.pos_ms||0);
 
-  // Extrapolate position forward from when server sampled it
+  // Always extrapolate position forward from when server sampled it
+  // Validate serverMs looks like epoch-ms and isn't wildly off
   let targetMs=rawPosMs;
-  if(clockOffsetValid){
-    const elapsed=(nowMs+clockOffset)-serverMs;
-    // With good offset, elapsed = transit time (~5-20ms)
-    // Bound to 0-200ms: if outside, offset is wrong
-    if(elapsed>0&&elapsed<200){
-      targetMs=rawPosMs+elapsed;
+  const serverOk=Number.isFinite(serverMs)&&serverMs>1e12&&Math.abs(nowMs-serverMs)<300000;
+  if(serverOk){
+    let elapsed;
+    if(clockOffsetValid){
+      elapsed=(nowMs+clockOffset)-serverMs;
     }else{
-      // Fallback: extrapolate without clock offset (assumes clocks are close)
-      const rawElapsed=nowMs-serverMs;
-      if(rawElapsed>0&&rawElapsed<500){
-        targetMs=rawPosMs+rawElapsed;
-      }
+      elapsed=nowMs-serverMs;
     }
-  }else{
-    // No clock offset yet: still extrapolate using raw time difference
-    const rawElapsed=nowMs-serverMs;
-    if(rawElapsed>0&&rawElapsed<500){
-      targetMs=rawPosMs+rawElapsed;
-    }
+    if(!Number.isFinite(elapsed))elapsed=0;
+    elapsed=clamp(elapsed,0,1500);
+    targetMs=rawPosMs+elapsed;
   }
 
   const targetSec=targetMs/1000.0;
@@ -454,15 +447,15 @@ async function syncInner(msg){
     return;
   }
 
-  // Emergency seek if very far off (>500ms) - throttle to once per 3 seconds
-  if(Math.abs(errMs)>500){
+  // Seek if off by more than 200ms - seeking is the primary correction
+  if(Math.abs(errMs)>200){
     const now=Date.now();
-    if(now-lastSeekMs>3000){
+    if(now-lastSeekMs>1500){
       audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
       lastSeekMs=now;
       errHistory2s=[];
       errHistoryAll=[];
-      settleUntil=now+2000;
+      settleUntil=now+1200;
     }
     audio.playbackRate=1.0;
     return;
@@ -474,11 +467,11 @@ async function syncInner(msg){
     return;
   }
 
-  // Gentle linear proportional control
-  // Gain 0.0001: at 50ms → 0.5%, at 100ms → 1% (at clamp)
-  // Clamp ±1% - playback rate stays between 0.99 and 1.01
-  const adjustment=errMs*0.0001;
-  audio.playbackRate=clamp(1.0+adjustment,0.99,1.01);
+  // Tiny rate nudges only for 30-200ms range
+  // Gain 0.00002: at 100ms → 0.2%, at 200ms → 0.4%
+  // Clamp ±0.5% - playback rate stays between 0.995 and 1.005
+  const adjustment=errMs*0.00002;
+  audio.playbackRate=clamp(1.0+adjustment,0.995,1.005);
 }
 
 // Fetch and display version (cache-busting)
