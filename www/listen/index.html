@@ -100,6 +100,12 @@
 
   </div>
 
+  <div id="logControls" class="hidden" style="margin-top:8px;text-align:right;">
+    <button id="copyLogBtn" style="font-size:12px;padding:4px 10px;width:auto;border:1px solid #555;background:#222;color:#aaa;">Copy Log</button>
+    <button id="clearLogBtn" style="font-size:12px;padding:4px 10px;width:auto;border:1px solid #555;background:#222;color:#aaa;">Clear Log</button>
+  </div>
+  <div id="logBox" class="box hidden" style="max-height:200px;overflow-y:auto;font-family:monospace;font-size:11px;white-space:pre-wrap;"></div>
+
   <audio id="audio" preload="auto" playsinline></audio>
 
 <script>
@@ -147,13 +153,42 @@ let offsetHistory=[];
 // --- Error tracking ---
 let errHistory2s=[], errHistoryAll=[];
 const ERR_2S_SIZE=8;
+let logThrottle=0;
 
 // --- Helpers ---
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 
-debugCheck.addEventListener('change',()=>{debugBox.classList.toggle('hidden',!debugCheck.checked);});
-audio.addEventListener('loadedmetadata',()=>{haveMetadata=true;});
-audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio file detected";});
+const logBox=document.getElementById('logBox');
+const LOG_MAX=200;
+let logCount=0;
+function log(msg){
+  if(!debugCheck.checked)return;
+  const t=new Date();
+  const ts=t.toTimeString().slice(0,8)+'.'+String(t.getMilliseconds()).padStart(3,'0');
+  const line=ts+' '+msg+'\n';
+  logBox.textContent+=line;
+  logCount++;
+  if(logCount>LOG_MAX){
+    const lines=logBox.textContent.split('\n');
+    logBox.textContent=lines.slice(-LOG_MAX).join('\n');
+    logCount=LOG_MAX;
+  }
+  logBox.scrollTop=logBox.scrollHeight;
+}
+
+const logControls=document.getElementById('logControls');
+debugCheck.addEventListener('change',()=>{
+  const show=debugCheck.checked;
+  debugBox.classList.toggle('hidden',!show);
+  logBox.classList.toggle('hidden',!show);
+  logControls.classList.toggle('hidden',!show);
+});
+document.getElementById('copyLogBtn').onclick=()=>{
+  if(navigator.clipboard){navigator.clipboard.writeText(logBox.textContent).then(()=>{document.getElementById('copyLogBtn').textContent='Copied!';setTimeout(()=>{document.getElementById('copyLogBtn').textContent='Copy Log';},1500);});}
+};
+document.getElementById('clearLogBtn').onclick=()=>{logBox.textContent='';logCount=0;};
+audio.addEventListener('loadedmetadata',()=>{haveMetadata=true;log('METADATA loaded');});
+audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio file detected";log('AUDIO ERROR');});
 
 // === Shared Clock Offset ===
 
@@ -195,6 +230,7 @@ function connectWebSocket(){
     fetchErrEl.textContent='';
     wsPingTimer=setInterval(sendPing,WS_PING_INTERVAL_MS);
     sendPing();
+    log('WS CONNECTED, offset reset');
   };
 
   ws.onmessage=(event)=>{
@@ -209,6 +245,7 @@ function connectWebSocket(){
   };
 
   ws.onclose=()=>{
+    log('WS DISCONNECTED, falling back to HTTP');
     wsConnected=false;
     if(wsPingTimer){clearInterval(wsPingTimer);wsPingTimer=null;}
     pollEl.textContent='WS disconnected, HTTP fallback';
@@ -237,6 +274,9 @@ function handlePong(data){
     if(rttHistory.length>RTT_HISTORY_SIZE)rttHistory.shift();
     rttEl.textContent=rtt;
     updateClockOffset(serverTs,clientTs,rtt);
+    log('PONG rtt='+rtt+'ms offset='+Math.round(clockOffset)+'ms');
+  }else{
+    log('PONG REJECTED rtt='+rtt+'ms (out of range)');
   }
 }
 
@@ -346,6 +386,7 @@ async function syncInner(msg){
 
   // Track change
   if(msg.base&&msg.base!==currentBase){
+    log('TRACK CHANGE: '+msg.base+' src='+msg.mp3_url);
     currentBase=msg.base;
     haveMetadata=false;
     needInitialSeek=true;
@@ -358,6 +399,7 @@ async function syncInner(msg){
 
   // Stop
   if(msg.state==='stop'){
+    log('STATE: stop');
     audio.pause();
     audio.currentTime=0;
     audio.playbackRate=1.0;
@@ -369,6 +411,7 @@ async function syncInner(msg){
 
   // Pause
   if(msg.state==='pause'){
+    log('STATE: pause');
     audio.pause();
     audio.playbackRate=1.0;
     errHistory2s=[];
@@ -378,7 +421,7 @@ async function syncInner(msg){
   }
 
   // Start playback if needed (do this BEFORE time calculation to avoid stale reads)
-  if(audio.paused)await safePlay();
+  if(audio.paused){log('PLAY resuming (was paused)');await safePlay();}
 
   // --- Time calculation with clock offset ---
   const nowMs=Date.now();
@@ -399,6 +442,8 @@ async function syncInner(msg){
     if(!Number.isFinite(elapsed))elapsed=0;
     elapsed=clamp(elapsed,0,1500);
     targetMs=rawPosMs+elapsed;
+  }else{
+    log('SERVER_MS INVALID: '+serverMs+' nowMs='+nowMs+' diff='+Math.abs(nowMs-serverMs));
   }
 
   const targetSec=targetMs/1000.0;
@@ -412,6 +457,7 @@ async function syncInner(msg){
     errEl.textContent='(settling)';
     playRateEl.textContent=audio.playbackRate.toFixed(3);
     audio.playbackRate=1.0;
+    if(++logThrottle%10===0)log('SETTLE remaining='+(settleUntil-Date.now())+'ms err='+Math.round(errMs)+'ms');
     return;
   }
 
@@ -434,7 +480,9 @@ async function syncInner(msg){
 
   // Initial seek when track starts
   if(needInitialSeek&&!audio.paused){
-    audio.currentTime=Math.max(0,Math.min(audio.duration||999999,targetSec));
+    const seekTo=Math.max(0,Math.min(audio.duration||999999,targetSec));
+    log('INITIAL SEEK to='+Math.round(seekTo*1000)+'ms target='+Math.round(targetMs)+'ms');
+    audio.currentTime=seekTo;
     needInitialSeek=false;
     errHistory2s=[];
     errHistoryAll=[];
@@ -451,11 +499,15 @@ async function syncInner(msg){
   if(Math.abs(errMs)>200){
     const now=Date.now();
     if(now-lastSeekMs>1500){
-      audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
+      const seekTo=Math.max(0,Math.min(audio.duration-0.05,targetSec));
+      log('SEEK err='+Math.round(errMs)+'ms to='+Math.round(seekTo*1000)+'ms target='+Math.round(targetMs)+'ms local='+Math.round(localSec*1000)+'ms');
+      audio.currentTime=seekTo;
       lastSeekMs=now;
       errHistory2s=[];
       errHistoryAll=[];
       settleUntil=now+1200;
+    }else{
+      log('SEEK BLOCKED err='+Math.round(errMs)+'ms cooldown='+(1500-(now-lastSeekMs))+'ms');
     }
     audio.playbackRate=1.0;
     return;
@@ -463,6 +515,7 @@ async function syncInner(msg){
 
   // Dead zone: if within 30ms, playback rate stays exactly 1.0
   if(Math.abs(errMs)<30){
+    if(audio.playbackRate!==1.0)log('DEADZONE err='+Math.round(errMs)+'ms rate→1.000');
     audio.playbackRate=1.0;
     return;
   }
@@ -471,7 +524,9 @@ async function syncInner(msg){
   // Gain 0.00002: at 100ms → 0.2%, at 200ms → 0.4%
   // Clamp ±0.5% - playback rate stays between 0.995 and 1.005
   const adjustment=errMs*0.00002;
-  audio.playbackRate=clamp(1.0+adjustment,0.995,1.005);
+  const newRate=clamp(1.0+adjustment,0.995,1.005);
+  audio.playbackRate=newRate;
+  if(++logThrottle%10===0)log('RATE err='+Math.round(errMs)+'ms rate='+newRate.toFixed(4)+' adj='+(adjustment*100).toFixed(3)+'%');
 }
 
 // Fetch and display version (cache-busting)
