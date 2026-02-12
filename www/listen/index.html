@@ -90,19 +90,17 @@
 
     <div><b>Error:</b> <span id="err">-</span> ms</div>
 
-    <div><b>Avg Error (2s):</b> <span id="avgErr2s">-</span> ms</div>
+    <div><b>Avg Error (5s):</b> <span id="avgErr5s">-</span> ms</div>
 
     <div><b>Avg Error (all):</b> <span id="avgErrAll">-</span> ms</div>
 
-    <div><b>Playback Rate:</b> <span id="playRate">1.0</span></div>
-
     <div><b>Effective Rate:</b> <span id="effRate">-</span></div>
 
-    <div><b>Sync Phase:</b> <span id="syncPhase">IDLE</span></div>
-
-    <div><b>Stored Rate:</b> <span id="storedRate">-</span></div>
-
     <div><b>Buffered:</b> <span id="buffered">-</span> s</div>
+
+    <div><b>Last Correction:</b> <span id="lastCorrection">-</span></div>
+
+    <div><b>Threshold:</b> <select id="thresholdSelect" style="background:#222;color:#aaa;border:1px solid #555;font-size:13px;"><option value="200">200 ms</option><option value="300" selected>300 ms</option><option value="500">500 ms</option></select></div>
 
   </div>
 
@@ -132,17 +130,16 @@ stateEl=document.getElementById('state'),
 targetEl=document.getElementById('target'),
 localEl=document.getElementById('local'),
 errEl=document.getElementById('err'),
-avgErr2sEl=document.getElementById('avgErr2s'),
+avgErr5sEl=document.getElementById('avgErr5s'),
 avgErrAllEl=document.getElementById('avgErrAll'),
-playRateEl=document.getElementById('playRate'),
 effRateEl=document.getElementById('effRate'),
-syncPhaseEl=document.getElementById('syncPhase'),
-storedRateEl=document.getElementById('storedRate'),
 bufferedEl=document.getElementById('buffered'),
+lastCorrectionEl=document.getElementById('lastCorrection'),
 rttEl=document.getElementById('rtt'),
 offsetEl=document.getElementById('offset'),
 debugCheck=document.getElementById('debugCheck'),
-debugBox=document.getElementById('debugBox');
+debugBox=document.getElementById('debugBox'),
+thresholdSelect=document.getElementById('thresholdSelect');
 
 // --- State ---
 let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0, settleUntil=0, syncBusy=false;
@@ -163,40 +160,35 @@ const OFFSET_HISTORY_SIZE=8;
 let rttHistory=[];
 let offsetHistory=[];
 
-// --- Error tracking ---
-let errHistory2s=[], errHistoryAll=[];
-const ERR_2S_SIZE=8;
+// --- Simple Sync: scheduled start + 5s check ---
+const CHECK_INTERVAL_MS=5000;
+const LEAD_MS=2000;
+const SEEK_COOLDOWN_MS=3000;
+let seekThresholdMs=300;
+let lastCheckMs=0;
+let checkSamples=[];
+let errHistoryAll=[];
+let awaitingStart=false;
+let scheduledStartTarget=0;
+let lastCorrectionMs=0;
 let logThrottle=0;
-
-// --- Calibrate-then-apply sync ---
-// Phase state machine: IDLE → ACQUIRE → CALIBRATE → LOCKED
-// ACQUIRE: initial seek done, waiting for settle
-// CALIBRATE: measuring drift at rate=1.0 for 3 seconds
-// LOCKED: holding calibrated rate, only re-seek on large error
-let syncPhase='IDLE';
-let calStartWall=0, calSamples=[];
-const CAL_DURATION_MS=3000;
-let calibratedRate=1.0;
-let emergencySeekCount=0;
 
 // --- Effective rate measurement ---
 let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
 
-// --- Stored rate (localStorage per device) ---
-const RATE_STORAGE_KEY='fpp-sync-rate';
-function loadStoredRate(){
-  try{
-    const v=localStorage.getItem(RATE_STORAGE_KEY);
-    if(v===null)return null;
-    const r=parseFloat(v);
-    return(r>0.9&&r<1.1)?r:null;
-  }catch(e){return null;}
-}
-function saveRate(rate){
-  try{localStorage.setItem(RATE_STORAGE_KEY,rate.toFixed(6));}catch(e){}
-}
-let storedRate=loadStoredRate();
-if(storedRate!==null)storedRateEl.textContent=storedRate.toFixed(4);
+// --- Threshold persistence ---
+const THRESHOLD_KEY='fpp-sync-threshold';
+try{
+  const saved=localStorage.getItem(THRESHOLD_KEY);
+  if(saved&&['200','300','500'].includes(saved)){
+    seekThresholdMs=parseInt(saved);
+    thresholdSelect.value=saved;
+  }
+}catch(e){}
+thresholdSelect.addEventListener('change',()=>{
+  seekThresholdMs=parseInt(thresholdSelect.value);
+  try{localStorage.setItem(THRESHOLD_KEY,thresholdSelect.value);}catch(e){}
+});
 
 // --- Helpers ---
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
@@ -223,12 +215,11 @@ function log(msg){
 // --- Server-side reporting (always on, minimal overhead) ---
 const REPORT_INTERVAL_MS=2000;
 let lastReportMs=0;
-// Latest positions for inclusion in reports
 let lastRawPosMs=0, lastTargetMs=0, lastLocalMs=0;
 function sendReport(event,errMs,rate){
   if(!ws||ws.readyState!==WebSocket.OPEN)return;
   const now=Date.now();
-  const immediate=event==='SEEK'||event==='TRACK'||event==='INITIAL_SEEK'||event==='STOP'||event==='CAL_START'||event==='CAL_DONE'||event==='RECAL';
+  const immediate=event==='START'||event==='CORRECTION'||event==='TRACK'||event==='INITIAL_SEEK'||event==='STOP';
   if(!immediate&&(now-lastReportMs)<REPORT_INTERVAL_MS)return;
   lastReportMs=now;
   ws.send(JSON.stringify({
@@ -265,13 +256,11 @@ audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio fil
 // === Shared Clock Offset ===
 
 function updateClockOffset(serverTs, clientSendTs, rtt){
-  // NTP-style: offset = serverTs - clientSendTs - rtt/2
   const sample=serverTs-clientSendTs-(rtt/2);
 
   offsetHistory.push(sample);
   if(offsetHistory.length>OFFSET_HISTORY_SIZE)offsetHistory.shift();
 
-  // Median filter to reject outliers, then EWMA smooth
   const sorted=[...offsetHistory].sort((a,b)=>a-b);
   const median=sorted[Math.floor(sorted.length/2)];
 
@@ -294,7 +283,6 @@ function connectWebSocket(){
   ws.onopen=()=>{
     wsConnected=true;
     stopHttpPolling();
-    // Flush any bad HTTP-based offset samples (PHP 32-bit intval overflow)
     offsetHistory=[];
     clockOffsetValid=false;
     clockOffset=0;
@@ -377,7 +365,6 @@ async function pollOnce(){
     if(!wsConnected)pollEl.textContent='HTTP ok ('+rtt+' ms)';
     fetchErrEl.textContent='';
 
-    // HTTP-based clock offset estimation using server_ms from status.php
     if(msg.server_ms&&rtt>0&&rtt<500){
       updateClockOffset(msg.server_ms,t0,rtt);
       if(!wsConnected)rttEl.textContent=rtt;
@@ -410,7 +397,6 @@ enableBtn.onclick=()=>{
   enableBtn.textContent='Audio Enabled';
   pollEl.textContent='Connecting...';
 
-  // Try WebSocket first, HTTP polling as immediate fallback
   connectWebSocket();
   startHttpFallback();
 
@@ -425,18 +411,34 @@ enableBtn.onclick=()=>{
   }catch(e){audio.muted=false;}
 };
 
-// Reconnect WebSocket when page becomes visible again
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'&&enabled&&!wsConnected){
     connectWebSocket();
   }
 });
 
+// === Scheduled Start Helper ===
+// Seeks ahead of FPP, waits for seeked event, sets awaitingStart flag.
+// The sync loop then waits for FPP to catch up and presses play at the right moment.
+
+function beginScheduledStart(targetSec){
+  const leadSec=LEAD_MS/1000;
+  const seekTo=clamp(targetSec+leadSec,0,audio.duration-0.05);
+  audio.pause();
+  audio.currentTime=seekTo;
+
+  const onSeeked=()=>{
+    audio.removeEventListener('seeked',onSeeked);
+    scheduledStartTarget=audio.currentTime;
+    awaitingStart=true;
+    log('SCHEDULED seek landed='+Math.round(scheduledStartTarget*1000)+'ms (target was '+Math.round(seekTo*1000)+'ms)');
+  };
+  audio.addEventListener('seeked',onSeeked);
+}
+
 // === Sync Algorithm ===
 
 async function sync(msg){
-  // Queue latest message instead of dropping - prevents stale drift
-  // when syncInner is blocked (e.g. during safePlay)
   pendingMsg=msg;
   if(syncBusy)return;
   syncBusy=true;
@@ -464,9 +466,8 @@ async function syncInner(msg){
     trackName.textContent=msg.base;
   }
 
-  // Track change - auto-clear logs for fresh start
+  // Track change
   if(msg.base&&msg.base!==currentBase){
-    // Auto-clear phone log
     logBox.textContent='';logCount=0;logFrozen=false;
     document.getElementById('logStatus').textContent='';
     document.getElementById('resumeLogBtn').style.display='none';
@@ -475,25 +476,21 @@ async function syncInner(msg){
     currentBase=msg.base;
     haveMetadata=false;
     needInitialSeek=true;
+    awaitingStart=false;
     audio.playbackRate=1.0;
     audio.src=msg.mp3_url||'';
     audio.load();
-    errHistory2s=[];
+    checkSamples=[];
     errHistoryAll=[];
     effRateWallMs=0;
-    syncPhase='ACQUIRE';
-    calSamples=[];
-    emergencySeekCount=0;
-    syncPhaseEl.textContent='ACQUIRE';
+    lastCheckMs=0;
   }
 
   // Stop
   if(msg.state==='stop'){
-    // Only log/report the transition once (server broadcasts stop every 100ms)
     if(wasPlaying){
       log('STATE: stop');
       sendReport('STOP',0,1.0);
-      // Freeze log when song ends so user can grab it
       if(logCheck.checked){
         logFrozen=true;
         document.getElementById('logStatus').textContent='Log frozen (song ended)';
@@ -503,12 +500,11 @@ async function syncInner(msg){
     audio.pause();
     audio.currentTime=0;
     audio.playbackRate=1.0;
-    errHistory2s=[];
+    checkSamples=[];
     errHistoryAll=[];
     needInitialSeek=false;
+    awaitingStart=false;
     wasPlaying=false;
-    syncPhase='IDLE';
-    syncPhaseEl.textContent='IDLE';
     return;
   }
 
@@ -517,28 +513,20 @@ async function syncInner(msg){
     log('STATE: pause');
     audio.pause();
     audio.playbackRate=1.0;
-    errHistory2s=[];
+    checkSamples=[];
     errHistoryAll=[];
     needInitialSeek=false;
+    awaitingStart=false;
     return;
   }
 
   wasPlaying=true;
-
-  // Start playback if needed - fire-and-forget to avoid blocking sync loop
-  if(audio.paused&&!playAttempting){
-    log('PLAY resuming (was paused)');
-    playAttempting=true;
-    safePlay().finally(()=>{playAttempting=false;});
-  }
 
   // --- Time calculation with clock offset ---
   const nowMs=Date.now();
   const serverMs=Number(msg.server_ms);
   const rawPosMs=Number(msg.pos_ms||0);
 
-  // Always extrapolate position forward from when server sampled it
-  // Validate serverMs looks like epoch-ms and isn't wildly off
   let targetMs=rawPosMs;
   const serverOk=Number.isFinite(serverMs)&&serverMs>1e12&&Math.abs(nowMs-serverMs)<300000;
   if(serverOk){
@@ -559,221 +547,143 @@ async function syncInner(msg){
   const localSec=audio.currentTime||0;
   const errMs=(targetSec-localSec)*1000.0;
 
-  // Store positions for server reports
   lastRawPosMs=rawPosMs;
   lastTargetMs=targetMs;
   lastLocalMs=localSec*1000;
 
-  // FIX #3: Don't compute or record error during settle (it's garbage after a seek)
-  if(Date.now()<settleUntil){
-    // Update display but don't record history or adjust anything
-    localEl.textContent=Math.round(localSec*1000);
-    errEl.textContent='(settling)';
-    playRateEl.textContent=audio.playbackRate.toFixed(4);
-    if(syncPhase==='LOCKED')audio.playbackRate=calibratedRate;
-    if(++logThrottle%10===0)log('SETTLE remaining='+(settleUntil-Date.now())+'ms phase='+syncPhase);
+  // Update debug display
+  localEl.textContent=Math.round(localSec*1000);
+  targetEl.textContent=Math.round(targetMs);
+
+  // Update last correction display
+  if(lastCorrectionMs>0){
+    const ago=Math.round((nowMs-lastCorrectionMs)/1000);
+    lastCorrectionEl.textContent=ago+'s ago';
+  }
+
+  // --- Scheduled start: waiting for metadata before we can seek ---
+  if(needInitialSeek&&haveMetadata){
+    needInitialSeek=false;
+    log('INITIAL: scheduling start, target='+Math.round(targetMs)+'ms');
+    sendReport('INITIAL_SEEK',errMs,1.0);
+    beginScheduledStart(targetSec);
     return;
   }
 
-  // Update debug display
-  localEl.textContent=Math.round(localSec*1000);
-  errEl.textContent=Math.round(errMs);
+  if(needInitialSeek){
+    // Still waiting for metadata
+    return;
+  }
 
-  errHistory2s.push(errMs);
-  if(errHistory2s.length>ERR_2S_SIZE)errHistory2s.shift();
+  // --- Awaiting scheduled start: paused, waiting for FPP to reach our position ---
+  if(awaitingStart){
+    const waitingForMs=scheduledStartTarget*1000;
+    const remainMs=waitingForMs-targetMs;
+
+    // FPP jumped backward past our target (operator rewind) — re-schedule
+    if(remainMs>LEAD_MS+1000){
+      log('RESCHEDULE: FPP jumped back, remain='+Math.round(remainMs)+'ms');
+      beginScheduledStart(targetSec);
+      return;
+    }
+
+    if(targetMs>=waitingForMs){
+      // FPP has reached our position — GO!
+      awaitingStart=false;
+      log('PLAY! landed='+Math.round(waitingForMs)+'ms fpp='+Math.round(targetMs)+'ms');
+      lastCheckMs=nowMs;
+      checkSamples=[];
+      settleUntil=nowMs+1500;
+      effRateWallMs=nowMs;
+      effRateLocalMs=scheduledStartTarget*1000;
+      playAttempting=true;
+      safePlay().finally(()=>{playAttempting=false;});
+      sendReport('START',0,1.0);
+    }else{
+      // Still waiting
+      errEl.textContent='(waiting '+Math.round(remainMs)+'ms)';
+      if(++logThrottle%20===0)log('WAITING remain='+Math.round(remainMs)+'ms target='+Math.round(targetMs)+'ms landed='+Math.round(waitingForMs)+'ms');
+    }
+    return;
+  }
+
+  // --- Settle period after play starts ---
+  if(nowMs<settleUntil){
+    errEl.textContent='(settling)';
+    if(++logThrottle%10===0)log('SETTLE remaining='+(settleUntil-nowMs)+'ms');
+    return;
+  }
+
+  // --- Start playback if somehow paused (e.g. browser tab switch) ---
+  if(audio.paused&&!playAttempting){
+    log('PLAY resuming (was paused)');
+    playAttempting=true;
+    safePlay().finally(()=>{playAttempting=false;});
+  }
+
+  // --- Normal operation ---
+  errEl.textContent=Math.round(errMs);
+  audio.playbackRate=1.0;
+
+  // Collect error samples
+  checkSamples.push(errMs);
   errHistoryAll.push(errMs);
   if(errHistoryAll.length>100)errHistoryAll.shift();
-  const avgErr2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length):0;
-  const avgErrAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;
-  avgErr2sEl.textContent=Math.round(avgErr2s);
-  avgErrAllEl.textContent=Math.round(avgErrAll);
+
+  const avgCheck=checkSamples.length>0?(checkSamples.reduce((a,b)=>a+b,0)/checkSamples.length):0;
+  const avgAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;
+  avgErr5sEl.textContent=Math.round(avgCheck);
+  avgErrAllEl.textContent=Math.round(avgAll);
 
   let bufferedSec=0;
   if(audio.buffered.length>0){bufferedSec=audio.buffered.end(audio.buffered.length-1)-localSec;}
   bufferedEl.textContent=bufferedSec.toFixed(1);
-  playRateEl.textContent=audio.playbackRate.toFixed(4);
-
-  // Initial seek when track starts
-  if(needInitialSeek&&!audio.paused&&haveMetadata){
-    const seekTo=Math.max(0,Math.min(audio.duration-0.05,targetSec));
-    log('INITIAL SEEK to='+Math.round(seekTo*1000)+'ms target='+Math.round(targetMs)+'ms');
-    sendReport('INITIAL_SEEK',errMs,1.0);
-    audio.currentTime=seekTo;
-    needInitialSeek=false;
-    errHistory2s=[];
-    errHistoryAll=[];
-    effRateWallMs=0;
-    settleUntil=Date.now()+1500;
-    return;
-  }
 
   if(!haveMetadata||!Number.isFinite(audio.duration)||audio.duration<=0){
-    audio.playbackRate=1.0;
     return;
   }
 
-  // ====== PHASE-BASED SYNC (Calibrate Then Apply) ======
-  // Instead of continuously adjusting playbackRate (which mobile browsers ignore),
-  // we: measure drift at rate=1.0 for 3s, calculate ONE calibrated rate,
-  // seek to fix accumulated error, then hold that rate forever.
-  // The calibrated rate is saved to localStorage so the device remembers it.
-  syncPhaseEl.textContent=syncPhase;
-
-  // Phase: ACQUIRE - settle is done, decide next step
-  if(syncPhase==='ACQUIRE'){
-    audio.playbackRate=1.0;
-    if(storedRate!==null){
-      calibratedRate=storedRate;
-      audio.playbackRate=calibratedRate;
-      syncPhase='LOCKED';
-      syncPhaseEl.textContent='LOCKED';
-      effRateWallMs=Date.now();
-      effRateLocalMs=localSec*1000;
-      log('LOCKED (stored rate='+calibratedRate.toFixed(4)+')');
-      sendReport('LOCKED',errMs,calibratedRate);
-    }else{
-      // Start calibration: record FPP and local positions (raw, no extrapolation)
-      calStartWall=Date.now();
-      calSamples=[{fpp:rawPosMs,local:localSec*1000}];
-      syncPhase='CALIBRATE';
-      syncPhaseEl.textContent='CALIBRATE';
-      log('CALIBRATE started fpp='+Math.round(rawPosMs)+' local='+Math.round(localSec*1000)+' err='+Math.round(errMs)+'ms');
-      sendReport('CAL_START',errMs,1.0);
-    }
-    return;
-  }
-
-  // Phase: CALIBRATE - measuring drift at rate=1.0
-  // Collect raw FPP pos_ms and audio.currentTime samples (no extrapolation)
-  if(syncPhase==='CALIBRATE'){
-    audio.playbackRate=1.0;
-    const calElapsed=Date.now()-calStartWall;
-    calSamples.push({fpp:rawPosMs,local:localSec*1000});
-
-    if(calElapsed<CAL_DURATION_MS){
-      if(++logThrottle%10===0)log('CAL '+(calElapsed/1000).toFixed(1)+'/'+CAL_DURATION_MS/1000+'s fpp='+Math.round(rawPosMs)+' local='+Math.round(localSec*1000)+' err='+Math.round(errMs)+'ms');
-      sendReport('CAL',errMs,1.0);
-      return;
-    }
-
-    // Calibration complete - use averaged endpoints for robustness
-    const nSamples=calSamples.length;
-    const headN=Math.min(5,Math.floor(nSamples/3));
-    const tailN=headN;
-    const head=calSamples.slice(0,headN);
-    const tail=calSamples.slice(-tailN);
-    const avgHeadFpp=head.reduce((s,p)=>s+p.fpp,0)/headN;
-    const avgHeadLocal=head.reduce((s,p)=>s+p.local,0)/headN;
-    const avgTailFpp=tail.reduce((s,p)=>s+p.fpp,0)/tailN;
-    const avgTailLocal=tail.reduce((s,p)=>s+p.local,0)/tailN;
-
-    const dFpp=avgTailFpp-avgHeadFpp;    // how much FPP advanced
-    const dLocal=avgTailLocal-avgHeadLocal; // how much phone audio advanced
-
-    if(dFpp>100){
-      // phoneSpeed = how fast phone plays relative to FPP
-      // >1.0 means phone is faster, <1.0 means phone is slower
-      const phoneSpeed=dLocal/dFpp;
-      // Correction: divide by phoneSpeed to match FPP
-      // If phone is 1% fast (1.01), set rate to 1/1.01 ≈ 0.9901 (slow down)
-      // If phone is 1% slow (0.99), set rate to 1/0.99 ≈ 1.0101 (speed up)
-      calibratedRate=clamp(1.0/phoneSpeed,0.95,1.05);
-      // Sanity: if very close to 1.0, just use 1.0
-      if(Math.abs(calibratedRate-1.0)<0.001)calibratedRate=1.0;
-    }else{
-      calibratedRate=1.0;
-      log('CAL: dFpp too small ('+Math.round(dFpp)+'ms), using rate=1.0');
-    }
-
-    // Seek to fix accumulated error
-    const seekTo=clamp(targetSec,0,audio.duration-0.05);
-    audio.currentTime=seekTo;
-    audio.playbackRate=calibratedRate;
-
-    // Save to localStorage for this device
-    saveRate(calibratedRate);
-    storedRate=calibratedRate;
-    storedRateEl.textContent=calibratedRate.toFixed(4);
-
-    lastSeekMs=Date.now();
-    settleUntil=Date.now()+1500;
-    errHistory2s=[];
-    errHistoryAll=[];
-    effRateWallMs=0;
-    syncPhase='LOCKED';
-    syncPhaseEl.textContent='LOCKED';
-
-    const phoneSpeed=dFpp>100?(dLocal/dFpp):1.0;
-    log('CAL DONE dFpp='+Math.round(dFpp)+'ms dLocal='+Math.round(dLocal)+'ms speed='+phoneSpeed.toFixed(4)+' rate='+calibratedRate.toFixed(4)+' n='+nSamples);
-    sendReport('CAL_DONE',errMs,calibratedRate);
-    return;
-  }
-
-  // Phase: LOCKED - hold calibrated rate, monitor for problems
-  if(syncPhase==='LOCKED'){
-    audio.playbackRate=calibratedRate;
-
-    // Measure effective rate for diagnostics
-    const rateNow=Date.now();
-    if(effRateWallMs>0){
-      const dWall=rateNow-effRateWallMs;
-      const dLocal=(localSec*1000)-effRateLocalMs;
-      if(dWall>1000){
-        lastEffRate=dLocal/dWall;
-        effRateEl.textContent=lastEffRate.toFixed(4);
-        effRateWallMs=rateNow;
-        effRateLocalMs=localSec*1000;
-      }
-    }else{
-      effRateWallMs=rateNow;
+  // Measure effective rate for diagnostics
+  if(effRateWallMs>0){
+    const dWall=nowMs-effRateWallMs;
+    const dLocal=(localSec*1000)-effRateLocalMs;
+    if(dWall>1000){
+      lastEffRate=dLocal/dWall;
+      effRateEl.textContent=lastEffRate.toFixed(4);
+      effRateWallMs=nowMs;
       effRateLocalMs=localSec*1000;
     }
-
-    // Emergency re-seek (>2s error)
-    if(Math.abs(errMs)>2000){
-      const now=Date.now();
-      if(now-lastSeekMs>5000){
-        const seekTo=clamp(targetSec,0,audio.duration-0.05);
-        audio.currentTime=seekTo;
-        lastSeekMs=now;
-        settleUntil=now+1500;
-        errHistory2s=[];
-        errHistoryAll=[];
-        log('EMERGENCY SEEK err='+Math.round(errMs)+'ms');
-        sendReport('SEEK',errMs,calibratedRate);
-        // After 2 emergency seeks, stored rate is wrong - recalibrate
-        if(++emergencySeekCount>=2){
-          storedRate=null;
-          try{localStorage.removeItem(RATE_STORAGE_KEY);}catch(e){}
-          storedRateEl.textContent='(recal)';
-          syncPhase='ACQUIRE';
-          syncPhaseEl.textContent='ACQUIRE';
-          emergencySeekCount=0;
-          log('RECALIBRATE triggered');
-          sendReport('RECAL',errMs,1.0);
-        }
-      }
-      return;
-    }
-
-    // Nudge seek (500ms-2s error, max once per 10s)
-    if(Math.abs(errMs)>500){
-      const now=Date.now();
-      if(now-lastSeekMs>10000){
-        const seekTo=clamp(targetSec,0,audio.duration-0.05);
-        audio.currentTime=seekTo;
-        lastSeekMs=now;
-        settleUntil=now+1500;
-        log('NUDGE err='+Math.round(errMs)+'ms');
-        sendReport('SEEK',errMs,calibratedRate);
-      }
-      return;
-    }
-
-    // Normal operation - periodic logging and reporting
-    if(++logThrottle%20===0)log('LOCKED err='+Math.round(errMs)+'ms avg='+Math.round(avgErrAll)+'ms rate='+calibratedRate.toFixed(4)+' eff='+lastEffRate.toFixed(4));
-    sendReport('LOCKED',errMs,calibratedRate);
+  }else{
+    effRateWallMs=nowMs;
+    effRateLocalMs=localSec*1000;
   }
+
+  // --- 5-second check ---
+  if(lastCheckMs===0)lastCheckMs=nowMs;
+
+  if((nowMs-lastCheckMs)>=CHECK_INTERVAL_MS){
+    const avgErr=checkSamples.length>0?(checkSamples.reduce((a,b)=>a+b,0)/checkSamples.length):0;
+    log('CHECK avg='+Math.round(avgErr)+'ms samples='+checkSamples.length+' threshold='+seekThresholdMs+'ms');
+
+    if(Math.abs(avgErr)>seekThresholdMs&&(nowMs-lastSeekMs)>SEEK_COOLDOWN_MS){
+      log('CORRECTION avgErr='+Math.round(avgErr)+'ms — scheduling resync');
+      sendReport('CORRECTION',avgErr,1.0);
+      lastSeekMs=nowMs;
+      lastCorrectionMs=nowMs;
+      errHistoryAll=[];
+      beginScheduledStart(targetSec);
+      checkSamples=[];
+      lastCheckMs=nowMs;
+      return;
+    }
+
+    checkSamples=[];
+    lastCheckMs=nowMs;
+  }
+
+  // Periodic logging and reporting
+  if(++logThrottle%20===0)log('SYNC err='+Math.round(errMs)+'ms avg5s='+Math.round(avgCheck)+'ms avgAll='+Math.round(avgAll)+'ms eff='+lastEffRate.toFixed(4));
+  sendReport('SYNC',errMs,1.0);
 }
 
 // Fetch and display version (cache-busting)
