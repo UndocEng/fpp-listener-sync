@@ -595,7 +595,7 @@ async function syncInner(msg){
       log('PLAY! landed='+Math.round(waitingForMs)+'ms fpp='+Math.round(targetMs)+'ms');
       lastCheckMs=nowMs;
       checkSamples=[];
-      settleUntil=nowMs+1500;
+      settleUntil=nowMs+3000;
       effRateWallMs=nowMs;
       effRateLocalMs=scheduledStartTarget*1000;
       playAttempting=true;
@@ -636,6 +636,7 @@ async function syncInner(msg){
     checkSamples.push(errMs);
     errHistoryAll.push(errMs);
     if(errHistoryAll.length>100)errHistoryAll.shift();
+    sendReport('SYNC',errMs,1.0);
   }
 
   const avgCheck=checkSamples.length>0?(checkSamples.reduce((a,b)=>a+b,0)/checkSamples.length):0;
@@ -670,12 +671,12 @@ async function syncInner(msg){
   if(lastCheckMs===0)lastCheckMs=nowMs;
 
   if((nowMs-lastCheckMs)>=CHECK_INTERVAL_MS){
-    const avgErr=checkSamples.length>0?(checkSamples.reduce((a,b)=>a+b,0)/checkSamples.length):0;
-    log('CHECK avg='+Math.round(avgErr)+'ms samples='+checkSamples.length+' threshold='+seekThresholdMs+'ms');
+    const latestErr=checkSamples.length>0?checkSamples[checkSamples.length-1]:0;
+    log('CHECK latest='+Math.round(latestErr)+'ms samples='+checkSamples.length+' threshold='+seekThresholdMs+'ms');
 
-    if(Math.abs(avgErr)>seekThresholdMs&&(nowMs-lastSeekMs)>SEEK_COOLDOWN_MS){
-      log('CORRECTION avgErr='+Math.round(avgErr)+'ms — scheduling resync');
-      sendReport('CORRECTION',avgErr,1.0);
+    if(Math.abs(latestErr)>seekThresholdMs&&(nowMs-lastSeekMs)>SEEK_COOLDOWN_MS){
+      log('CORRECTION err='+Math.round(latestErr)+'ms — scheduling resync');
+      sendReport('CORRECTION',latestErr,1.0);
       lastSeekMs=nowMs;
       lastCorrectionMs=nowMs;
       errHistoryAll=[];
@@ -690,9 +691,8 @@ async function syncInner(msg){
     lastCheckMs=nowMs;
   }
 
-  // Periodic logging and reporting
+  // Periodic logging
   if(++logThrottle%20===0)log('SYNC err='+Math.round(errMs)+'ms avg5s='+Math.round(avgCheck)+'ms avgAll='+Math.round(avgAll)+'ms eff='+lastEffRate.toFixed(4));
-  sendReport('SYNC',errMs,1.0);
 }
 
 // Fetch and display version (cache-busting)
