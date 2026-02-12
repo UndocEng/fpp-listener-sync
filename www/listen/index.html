@@ -435,20 +435,23 @@ async function syncInner(msg){
 
   // Stop
   if(msg.state==='stop'){
-    log('STATE: stop');
-    sendReport('STOP',0,1.0);
+    // Only log/report the transition once (server broadcasts stop every 100ms)
+    if(wasPlaying){
+      log('STATE: stop');
+      sendReport('STOP',0,1.0);
+      // Freeze log when song ends so user can grab it
+      if(logCheck.checked){
+        logFrozen=true;
+        document.getElementById('logStatus').textContent='Log frozen (song ended)';
+        document.getElementById('resumeLogBtn').style.display='';
+      }
+    }
     audio.pause();
     audio.currentTime=0;
     audio.playbackRate=1.0;
     errHistory2s=[];
     errHistoryAll=[];
     needInitialSeek=false;
-    // Freeze log when song ends so user can grab it
-    if(wasPlaying&&debugCheck.checked){
-      logFrozen=true;
-      document.getElementById('logStatus').textContent='Log frozen (song ended)';
-      document.getElementById('resumeLogBtn').style.display='';
-    }
     wasPlaying=false;
     return;
   }
@@ -519,6 +522,7 @@ async function syncInner(msg){
   errHistory2s.push(errMs);
   if(errHistory2s.length>ERR_2S_SIZE)errHistory2s.shift();
   errHistoryAll.push(errMs);
+  if(errHistoryAll.length>100)errHistoryAll.shift();
   const avgErr2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length):0;
   const avgErrAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;
   avgErr2sEl.textContent=Math.round(avgErr2s);
@@ -566,19 +570,19 @@ async function syncInner(msg){
     return;
   }
 
-  // Dead zone: if within 20ms, playback rate stays exactly 1.0
-  if(Math.abs(errMs)<20){
+  // Dead zone: if within 10ms, playback rate stays exactly 1.0
+  if(Math.abs(errMs)<10){
     if(audio.playbackRate!==1.0)log('DEADZONE err='+Math.round(errMs)+'ms rate→1.000');
     audio.playbackRate=1.0;
     sendReport('RATE',errMs,1.0);
     return;
   }
 
-  // Rate control handles ALL errors from 20ms to 2000ms.
-  // Gain 0.0001: 100ms→1%, 500ms→5%(clamped), 1000ms→5%(clamped)
+  // Rate control handles ALL errors from 10ms to 2000ms.
+  // Gain 0.0002: 50ms→1%, 250ms→5%(clamped), 500ms→5%(clamped)
   // Clamp ±5% - fast enough to correct 500ms in ~10s
   // Rate stays near 1.000 once converged (small errors → tiny adjustments)
-  const adjustment=errMs*0.0001;
+  const adjustment=errMs*0.0002;
   const newRate=clamp(1.0+adjustment,0.95,1.05);
   audio.playbackRate=newRate;
   sendReport('RATE',errMs,newRate);
