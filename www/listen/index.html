@@ -128,7 +128,7 @@ debugCheck=document.getElementById('debugCheck'),
 debugBox=document.getElementById('debugBox');
 
 // --- State ---
-let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0, settleUntil=0;
+let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0, settleUntil=0, syncBusy=false;
 
 // --- WebSocket ---
 const WS_RECONNECT_MS=2000;
@@ -143,10 +143,6 @@ const RTT_HISTORY_SIZE=5;
 const OFFSET_HISTORY_SIZE=8;
 let rttHistory=[];
 let offsetHistory=[];
-
-// --- Position averaging ---
-let posHistory=[];
-const POS_HISTORY_SIZE=1;
 
 // --- Error tracking ---
 let errHistory2s=[], errHistoryAll=[];
@@ -327,6 +323,13 @@ document.addEventListener('visibilitychange',()=>{
 // === Sync Algorithm ===
 
 async function sync(msg){
+  // FIX #1: Sync guard - prevent overlapping async calls from fighting
+  if(syncBusy)return;
+  syncBusy=true;
+  try{await syncInner(msg);}finally{syncBusy=false;}
+}
+
+async function syncInner(msg){
   seqEl.textContent=msg.base||'-';
   stateEl.textContent=msg.state||'-';
   targetEl.textContent=msg.pos_ms??'-';
@@ -349,7 +352,6 @@ async function sync(msg){
     audio.playbackRate=1.0;
     audio.src=msg.mp3_url||'';
     audio.load();
-    posHistory=[];
     errHistory2s=[];
     errHistoryAll=[];
   }
@@ -359,7 +361,6 @@ async function sync(msg){
     audio.pause();
     audio.currentTime=0;
     audio.playbackRate=1.0;
-    posHistory=[];
     errHistory2s=[];
     errHistoryAll=[];
     needInitialSeek=false;
@@ -370,34 +371,44 @@ async function sync(msg){
   if(msg.state==='pause'){
     audio.pause();
     audio.playbackRate=1.0;
-    posHistory=[];
     errHistory2s=[];
     errHistoryAll=[];
     needInitialSeek=false;
     return;
   }
 
+  // Start playback if needed (do this BEFORE time calculation to avoid stale reads)
+  if(audio.paused)await safePlay();
+
   // --- Time calculation with clock offset ---
   const nowMs=Date.now();
   const serverMs=Number(msg.server_ms);
   const rawPosMs=Number(msg.pos_ms||0);
 
-  let smoothPosMs;
+  // FIX #2: Bound the clock extrapolation to a sane range
+  let targetMs=rawPosMs;
   if(clockOffsetValid){
-    // Convert client time to server time domain, then compute elapsed since server sampled pos
-    const clientAsServerTime=nowMs+clockOffset;
-    smoothPosMs=rawPosMs+(clientAsServerTime-serverMs);
-  }else{
-    // No valid clock offset yet - use pos_ms directly (only off by transit delay ~2-10ms)
-    smoothPosMs=rawPosMs;
+    const elapsed=(nowMs+clockOffset)-serverMs;
+    // Elapsed should be small and positive (transit time ~5-20ms)
+    // If it's negative or huge, clock offset is wrong - use raw pos_ms
+    if(elapsed>0&&elapsed<200){
+      targetMs=rawPosMs+elapsed;
+    }
   }
 
-  posHistory.push(smoothPosMs);
-  if(posHistory.length>POS_HISTORY_SIZE)posHistory.shift();
-  const avgPosMs=posHistory.reduce((a,b)=>a+b,0)/posHistory.length;
-  const targetSec=avgPosMs/1000.0;
+  const targetSec=targetMs/1000.0;
   const localSec=audio.currentTime||0;
   const errMs=(targetSec-localSec)*1000.0;
+
+  // FIX #3: Don't compute or record error during settle (it's garbage after a seek)
+  if(Date.now()<settleUntil){
+    // Update display but don't record history or adjust anything
+    localEl.textContent=Math.round(localSec*1000);
+    errEl.textContent='(settling)';
+    playRateEl.textContent=audio.playbackRate.toFixed(3);
+    audio.playbackRate=1.0;
+    return;
+  }
 
   // Update debug display
   localEl.textContent=Math.round(localSec*1000);
@@ -416,13 +427,12 @@ async function sync(msg){
   bufferedEl.textContent=bufferedSec.toFixed(1);
   playRateEl.textContent=audio.playbackRate.toFixed(3);
 
-  if(audio.paused)await safePlay();
-
   // Initial seek when track starts
   if(needInitialSeek&&!audio.paused){
     audio.currentTime=Math.max(0,Math.min(audio.duration||999999,targetSec));
     needInitialSeek=false;
-    posHistory=[];
+    errHistory2s=[];
+    errHistoryAll=[];
     settleUntil=Date.now()+1500;
     return;
   }
@@ -432,38 +442,31 @@ async function sync(msg){
     return;
   }
 
-  // After a seek, let the browser settle before making corrections
-  if(Date.now()<settleUntil){
-    audio.playbackRate=1.0;
-    return;
-  }
-
-  // Emergency seek if very far off (>500ms) - throttle to once per 2 seconds
+  // Emergency seek if very far off (>500ms) - throttle to once per 3 seconds
   if(Math.abs(errMs)>500){
     const now=Date.now();
-    if(now-lastSeekMs>2000){
+    if(now-lastSeekMs>3000){
       audio.currentTime=Math.max(0,Math.min(audio.duration-0.05,targetSec));
       lastSeekMs=now;
-      posHistory=[];
-      settleUntil=now+1500;
+      errHistory2s=[];
+      errHistoryAll=[];
+      settleUntil=now+2000;
     }
     audio.playbackRate=1.0;
     return;
   }
 
-  // Lock at 1.0 if close enough (<40ms)
-  if(Math.abs(errMs)<40){
+  // Dead zone: if within 30ms, playback rate stays exactly 1.0
+  if(Math.abs(errMs)<30){
     audio.playbackRate=1.0;
     return;
   }
 
-  // Non-linear (quadratic) proportional control
-  // Gentle near dead zone, stronger further out - prevents overshoot
-  // 50ms→0.5%, 75ms→1.1%, 100ms+→2% (clamped)
-  const sign=errMs>0?1:-1;
-  const absErr=Math.abs(errMs);
-  const adjustment=sign*absErr*absErr*0.000002;
-  audio.playbackRate=clamp(1.0+adjustment,0.98,1.02);
+  // Gentle linear proportional control
+  // Gain 0.0001: at 50ms → 0.5%, at 100ms → 1% (at clamp)
+  // Clamp ±1% - playback rate stays between 0.99 and 1.01
+  const adjustment=errMs*0.0001;
+  audio.playbackRate=clamp(1.0+adjustment,0.99,1.01);
 }
 
 // Fetch and display version (cache-busting)
