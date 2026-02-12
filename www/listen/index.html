@@ -98,6 +98,10 @@
 
     <div><b>Effective Rate:</b> <span id="effRate">-</span></div>
 
+    <div><b>Sync Phase:</b> <span id="syncPhase">IDLE</span></div>
+
+    <div><b>Stored Rate:</b> <span id="storedRate">-</span></div>
+
     <div><b>Buffered:</b> <span id="buffered">-</span> s</div>
 
   </div>
@@ -132,6 +136,8 @@ avgErr2sEl=document.getElementById('avgErr2s'),
 avgErrAllEl=document.getElementById('avgErrAll'),
 playRateEl=document.getElementById('playRate'),
 effRateEl=document.getElementById('effRate'),
+syncPhaseEl=document.getElementById('syncPhase'),
+storedRateEl=document.getElementById('storedRate'),
 bufferedEl=document.getElementById('buffered'),
 rttEl=document.getElementById('rtt'),
 offsetEl=document.getElementById('offset'),
@@ -162,15 +168,35 @@ let errHistory2s=[], errHistoryAll=[];
 const ERR_2S_SIZE=8;
 let logThrottle=0;
 
-// --- Rate control throttle ---
-// Mobile audio engines can't apply rapid rate changes (10Hz).
-// Update rate every 500ms using averaged error for stable correction.
-let lastRateSetMs=0;
-const RATE_UPDATE_MS=500;
+// --- Calibrate-then-apply sync ---
+// Phase state machine: IDLE → ACQUIRE → CALIBRATE → LOCKED
+// ACQUIRE: initial seek done, waiting for settle
+// CALIBRATE: measuring drift at rate=1.0 for 3 seconds
+// LOCKED: holding calibrated rate, only re-seek on large error
+let syncPhase='IDLE';
+let calStartWall=0, calStartErr=0, calSamples=[];
+const CAL_DURATION_MS=3000;
+let calibratedRate=1.0;
+let emergencySeekCount=0;
 
 // --- Effective rate measurement ---
-// Measures actual audio advance vs wall clock to verify browser honors playbackRate
 let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
+
+// --- Stored rate (localStorage per device) ---
+const RATE_STORAGE_KEY='fpp-sync-rate';
+function loadStoredRate(){
+  try{
+    const v=localStorage.getItem(RATE_STORAGE_KEY);
+    if(v===null)return null;
+    const r=parseFloat(v);
+    return(r>0.9&&r<1.1)?r:null;
+  }catch(e){return null;}
+}
+function saveRate(rate){
+  try{localStorage.setItem(RATE_STORAGE_KEY,rate.toFixed(6));}catch(e){}
+}
+let storedRate=loadStoredRate();
+if(storedRate!==null)storedRateEl.textContent=storedRate.toFixed(4);
 
 // --- Helpers ---
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
@@ -202,7 +228,7 @@ let lastRawPosMs=0, lastTargetMs=0, lastLocalMs=0;
 function sendReport(event,errMs,rate){
   if(!ws||ws.readyState!==WebSocket.OPEN)return;
   const now=Date.now();
-  const immediate=event==='SEEK'||event==='TRACK'||event==='INITIAL_SEEK'||event==='STOP';
+  const immediate=event==='SEEK'||event==='TRACK'||event==='INITIAL_SEEK'||event==='STOP'||event==='CAL_START'||event==='CAL_DONE'||event==='RECAL';
   if(!immediate&&(now-lastReportMs)<REPORT_INTERVAL_MS)return;
   lastReportMs=now;
   ws.send(JSON.stringify({
@@ -454,8 +480,11 @@ async function syncInner(msg){
     audio.load();
     errHistory2s=[];
     errHistoryAll=[];
-    lastRateSetMs=0;
     effRateWallMs=0;
+    syncPhase='ACQUIRE';
+    calSamples=[];
+    emergencySeekCount=0;
+    syncPhaseEl.textContent='ACQUIRE';
   }
 
   // Stop
@@ -478,6 +507,8 @@ async function syncInner(msg){
     errHistoryAll=[];
     needInitialSeek=false;
     wasPlaying=false;
+    syncPhase='IDLE';
+    syncPhaseEl.textContent='IDLE';
     return;
   }
 
@@ -538,9 +569,9 @@ async function syncInner(msg){
     // Update display but don't record history or adjust anything
     localEl.textContent=Math.round(localSec*1000);
     errEl.textContent='(settling)';
-    playRateEl.textContent=audio.playbackRate.toFixed(3);
-    audio.playbackRate=1.0;
-    if(++logThrottle%10===0)log('SETTLE remaining='+(settleUntil-Date.now())+'ms err='+Math.round(errMs)+'ms');
+    playRateEl.textContent=audio.playbackRate.toFixed(4);
+    if(syncPhase==='LOCKED')audio.playbackRate=calibratedRate;
+    if(++logThrottle%10===0)log('SETTLE remaining='+(settleUntil-Date.now())+'ms phase='+syncPhase);
     return;
   }
 
@@ -560,18 +591,17 @@ async function syncInner(msg){
   let bufferedSec=0;
   if(audio.buffered.length>0){bufferedSec=audio.buffered.end(audio.buffered.length-1)-localSec;}
   bufferedEl.textContent=bufferedSec.toFixed(1);
-  playRateEl.textContent=audio.playbackRate.toFixed(3);
+  playRateEl.textContent=audio.playbackRate.toFixed(4);
 
   // Initial seek when track starts
-  if(needInitialSeek&&!audio.paused){
-    const seekTo=Math.max(0,Math.min(audio.duration||999999,targetSec));
+  if(needInitialSeek&&!audio.paused&&haveMetadata){
+    const seekTo=Math.max(0,Math.min(audio.duration-0.05,targetSec));
     log('INITIAL SEEK to='+Math.round(seekTo*1000)+'ms target='+Math.round(targetMs)+'ms');
     sendReport('INITIAL_SEEK',errMs,1.0);
     audio.currentTime=seekTo;
     needInitialSeek=false;
     errHistory2s=[];
     errHistoryAll=[];
-    lastRateSetMs=0;
     effRateWallMs=0;
     settleUntil=Date.now()+1500;
     return;
@@ -582,59 +612,149 @@ async function syncInner(msg){
     return;
   }
 
-  // Emergency seek ONLY for catastrophic desync (>2s).
-  // MP3 seeking is inaccurate (~500ms keyframe granularity) so frequent
-  // seeks cause oscillation. Let rate control handle everything <2s.
-  if(Math.abs(errMs)>2000){
-    const now=Date.now();
-    if(now-lastSeekMs>3000){
-      const seekTo=Math.max(0,Math.min(audio.duration-0.05,targetSec));
-      log('SEEK err='+Math.round(errMs)+'ms to='+Math.round(seekTo*1000)+'ms');
-      sendReport('SEEK',errMs,1.0);
-      audio.currentTime=seekTo;
-      lastSeekMs=now;
-      errHistory2s=[];
-      errHistoryAll=[];
-      lastRateSetMs=0;
-      effRateWallMs=0;
-      settleUntil=now+2000;
-    }
+  // ====== PHASE-BASED SYNC (Calibrate Then Apply) ======
+  // Instead of continuously adjusting playbackRate (which mobile browsers ignore),
+  // we: measure drift at rate=1.0 for 3s, calculate ONE calibrated rate,
+  // seek to fix accumulated error, then hold that rate forever.
+  // The calibrated rate is saved to localStorage so the device remembers it.
+  syncPhaseEl.textContent=syncPhase;
+
+  // Phase: ACQUIRE - settle is done, decide next step
+  if(syncPhase==='ACQUIRE'){
     audio.playbackRate=1.0;
+    if(storedRate!==null){
+      calibratedRate=storedRate;
+      audio.playbackRate=calibratedRate;
+      syncPhase='LOCKED';
+      syncPhaseEl.textContent='LOCKED';
+      effRateWallMs=Date.now();
+      effRateLocalMs=localSec*1000;
+      log('LOCKED (stored rate='+calibratedRate.toFixed(4)+')');
+      sendReport('LOCKED',errMs,calibratedRate);
+    }else{
+      calStartWall=Date.now();
+      calStartErr=errMs;
+      calSamples=[{t:0,e:errMs}];
+      syncPhase='CALIBRATE';
+      syncPhaseEl.textContent='CALIBRATE';
+      log('CALIBRATE started err='+Math.round(errMs)+'ms');
+      sendReport('CAL_START',errMs,1.0);
+    }
     return;
   }
 
-  // Rate control: update every 500ms using averaged error.
-  // Mobile audio engines can't apply rate changes at 10Hz - they get ignored.
-  // Throttling to 2Hz with averaged error gives stable, effective correction.
-  const rateNow=Date.now();
-  if(rateNow-lastRateSetMs>=RATE_UPDATE_MS){
-    // Measure effective rate: actual audio advance vs wall clock over last interval
+  // Phase: CALIBRATE - measuring drift at rate=1.0
+  if(syncPhase==='CALIBRATE'){
+    audio.playbackRate=1.0;
+    const calElapsed=Date.now()-calStartWall;
+    calSamples.push({t:calElapsed,e:errMs});
+
+    if(calElapsed<CAL_DURATION_MS){
+      if(++logThrottle%10===0)log('CAL '+(calElapsed/1000).toFixed(1)+'/'+CAL_DURATION_MS/1000+'s err='+Math.round(errMs)+'ms');
+      sendReport('CAL',errMs,1.0);
+      return;
+    }
+
+    // Calibration complete - linear regression for robust drift estimate
+    const n=calSamples.length;
+    const sumX=calSamples.reduce((s,p)=>s+p.t,0);
+    const sumY=calSamples.reduce((s,p)=>s+p.e,0);
+    const sumXY=calSamples.reduce((s,p)=>s+p.t*p.e,0);
+    const sumX2=calSamples.reduce((s,p)=>s+p.t*p.t,0);
+    const denom=n*sumX2-sumX*sumX;
+    const slope=denom!==0?(n*sumXY-sumX*sumY)/denom:0;
+    // slope = ms_error_change per ms_wall → correction rate
+    calibratedRate=clamp(1.0+slope,0.95,1.05);
+
+    // Seek to fix accumulated error
+    const seekTo=clamp(targetSec,0,audio.duration-0.05);
+    audio.currentTime=seekTo;
+    audio.playbackRate=calibratedRate;
+
+    // Save to localStorage for this device
+    saveRate(calibratedRate);
+    storedRate=calibratedRate;
+    storedRateEl.textContent=calibratedRate.toFixed(4);
+
+    lastSeekMs=Date.now();
+    settleUntil=Date.now()+1500;
+    errHistory2s=[];
+    errHistoryAll=[];
+    effRateWallMs=0;
+    syncPhase='LOCKED';
+    syncPhaseEl.textContent='LOCKED';
+
+    const driftPerSec=slope*1000;
+    log('CAL DONE drift='+driftPerSec.toFixed(2)+'ms/s rate='+calibratedRate.toFixed(4)+' samples='+n);
+    sendReport('CAL_DONE',errMs,calibratedRate);
+    return;
+  }
+
+  // Phase: LOCKED - hold calibrated rate, monitor for problems
+  if(syncPhase==='LOCKED'){
+    audio.playbackRate=calibratedRate;
+
+    // Measure effective rate for diagnostics
+    const rateNow=Date.now();
     if(effRateWallMs>0){
       const dWall=rateNow-effRateWallMs;
       const dLocal=(localSec*1000)-effRateLocalMs;
-      if(dWall>100){
+      if(dWall>1000){
         lastEffRate=dLocal/dWall;
-        effRateEl.textContent=lastEffRate.toFixed(3);
+        effRateEl.textContent=lastEffRate.toFixed(4);
+        effRateWallMs=rateNow;
+        effRateLocalMs=localSec*1000;
       }
-    }
-    effRateWallMs=rateNow;
-    effRateLocalMs=localSec*1000;
-
-    lastRateSetMs=rateNow;
-    // Use 0.8s average error for smooth control (no dead-zone oscillation)
-    const rateErr=errHistory2s.length>=3
-      ?(errHistory2s.reduce((a,b)=>a+b,0)/errHistory2s.length)
-      :errMs;
-    if(Math.abs(rateErr)<3){
-      audio.playbackRate=1.0;
     }else{
-      // Gain 0.0003: 30ms→0.9%, 100ms→3%, 170ms→5%(clamped)
-      const adjustment=rateErr*0.0003;
-      audio.playbackRate=clamp(1.0+adjustment,0.95,1.05);
+      effRateWallMs=rateNow;
+      effRateLocalMs=localSec*1000;
     }
-    if(++logThrottle%4===0)log('RATE err='+Math.round(errMs)+'ms avg='+Math.round(rateErr)+'ms rate='+audio.playbackRate.toFixed(4)+' eff='+lastEffRate.toFixed(3));
+
+    // Emergency re-seek (>2s error)
+    if(Math.abs(errMs)>2000){
+      const now=Date.now();
+      if(now-lastSeekMs>5000){
+        const seekTo=clamp(targetSec,0,audio.duration-0.05);
+        audio.currentTime=seekTo;
+        lastSeekMs=now;
+        settleUntil=now+1500;
+        errHistory2s=[];
+        errHistoryAll=[];
+        log('EMERGENCY SEEK err='+Math.round(errMs)+'ms');
+        sendReport('SEEK',errMs,calibratedRate);
+        // After 2 emergency seeks, stored rate is wrong - recalibrate
+        if(++emergencySeekCount>=2){
+          storedRate=null;
+          try{localStorage.removeItem(RATE_STORAGE_KEY);}catch(e){}
+          storedRateEl.textContent='(recal)';
+          syncPhase='ACQUIRE';
+          syncPhaseEl.textContent='ACQUIRE';
+          emergencySeekCount=0;
+          log('RECALIBRATE triggered');
+          sendReport('RECAL',errMs,1.0);
+        }
+      }
+      return;
+    }
+
+    // Nudge seek (500ms-2s error, max once per 10s)
+    if(Math.abs(errMs)>500){
+      const now=Date.now();
+      if(now-lastSeekMs>10000){
+        const seekTo=clamp(targetSec,0,audio.duration-0.05);
+        audio.currentTime=seekTo;
+        lastSeekMs=now;
+        settleUntil=now+1500;
+        log('NUDGE err='+Math.round(errMs)+'ms');
+        sendReport('SEEK',errMs,calibratedRate);
+      }
+      return;
+    }
+
+    // Normal operation - periodic logging and reporting
+    if(++logThrottle%20===0)log('LOCKED err='+Math.round(errMs)+'ms avg='+Math.round(avgErrAll)+'ms rate='+calibratedRate.toFixed(4)+' eff='+lastEffRate.toFixed(4));
+    sendReport('LOCKED',errMs,calibratedRate);
   }
-  sendReport('RATE',errMs,audio.playbackRate);
 }
 
 // Fetch and display version (cache-busting)
