@@ -70,15 +70,9 @@ def fetch_fpp_status():
 
 
 def parse_fpp_state(src, server_ms):
-    """Convert raw FPP API response to broadcast format."""
+    """Convert raw FPP API response to broadcast format. Returns None on API failure."""
     if src is None:
-        return {
-            "state": "stop",
-            "base": "",
-            "pos_ms": 0,
-            "mp3_url": "",
-            "server_ms": server_ms
-        }
+        return None
 
     status_name = str(src.get("status_name", "")).lower()
     status_int = int(src.get("status", -1))
@@ -135,9 +129,14 @@ async def fpp_poll_loop():
         t_after = time.time()
         server_ms = int(((t_before + t_after) / 2) * 1000)
 
-        current_state = parse_fpp_state(src, server_ms)
-        msg = json.dumps(current_state)
-        await broadcast(msg)
+        new_state = parse_fpp_state(src, server_ms)
+        if new_state is not None:
+            current_state = new_state
+        elif current_state:
+            # API hiccup: keep last known state, just update timestamp
+            current_state["server_ms"] = server_ms
+        if current_state:
+            await broadcast(json.dumps(current_state))
 
         elapsed = time.time() - t_before
         sleep_s = max(0.01, (POLL_INTERVAL_MS / 1000.0) - elapsed)

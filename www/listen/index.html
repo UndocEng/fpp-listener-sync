@@ -385,14 +385,26 @@ async function syncInner(msg){
   const serverMs=Number(msg.server_ms);
   const rawPosMs=Number(msg.pos_ms||0);
 
-  // FIX #2: Bound the clock extrapolation to a sane range
+  // Extrapolate position forward from when server sampled it
   let targetMs=rawPosMs;
   if(clockOffsetValid){
     const elapsed=(nowMs+clockOffset)-serverMs;
-    // Elapsed should be small and positive (transit time ~5-20ms)
-    // If it's negative or huge, clock offset is wrong - use raw pos_ms
+    // With good offset, elapsed = transit time (~5-20ms)
+    // Bound to 0-200ms: if outside, offset is wrong
     if(elapsed>0&&elapsed<200){
       targetMs=rawPosMs+elapsed;
+    }else{
+      // Fallback: extrapolate without clock offset (assumes clocks are close)
+      const rawElapsed=nowMs-serverMs;
+      if(rawElapsed>0&&rawElapsed<500){
+        targetMs=rawPosMs+rawElapsed;
+      }
+    }
+  }else{
+    // No clock offset yet: still extrapolate using raw time difference
+    const rawElapsed=nowMs-serverMs;
+    if(rawElapsed>0&&rawElapsed<500){
+      targetMs=rawPosMs+rawElapsed;
     }
   }
 
