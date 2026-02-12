@@ -180,11 +180,12 @@ function log(msg){
   logBox.scrollTop=logBox.scrollHeight;
 }
 
-// --- Server-side reporting (only when logging enabled) ---
+// --- Server-side reporting (always on, minimal overhead) ---
 const REPORT_INTERVAL_MS=2000;
 let lastReportMs=0;
+// Latest positions for inclusion in reports
+let lastRawPosMs=0, lastTargetMs=0, lastLocalMs=0;
 function sendReport(event,errMs,rate){
-  if(!logCheck.checked)return;
   if(!ws||ws.readyState!==WebSocket.OPEN)return;
   const now=Date.now();
   const immediate=event==='SEEK'||event==='TRACK'||event==='INITIAL_SEEK'||event==='STOP';
@@ -193,6 +194,9 @@ function sendReport(event,errMs,rate){
   ws.send(JSON.stringify({
     type:'report',
     event:event,
+    fpp:Math.round(lastRawPosMs),
+    target:Math.round(lastTargetMs),
+    local:Math.round(lastLocalMs),
     err:Math.round(errMs||0),
     rate:Number((rate||1.0).toFixed(4)),
     offset:Math.round(clockOffset),
@@ -411,8 +415,12 @@ async function syncInner(msg){
     trackName.textContent=msg.base;
   }
 
-  // Track change
+  // Track change - auto-clear logs for fresh start
   if(msg.base&&msg.base!==currentBase){
+    // Auto-clear phone log
+    logBox.textContent='';logCount=0;logFrozen=false;
+    document.getElementById('logStatus').textContent='';
+    document.getElementById('resumeLogBtn').style.display='none';
     log('TRACK CHANGE: '+msg.base+' src='+msg.mp3_url);
     sendReport('TRACK',0,1.0);
     currentBase=msg.base;
@@ -487,6 +495,11 @@ async function syncInner(msg){
   const targetSec=targetMs/1000.0;
   const localSec=audio.currentTime||0;
   const errMs=(targetSec-localSec)*1000.0;
+
+  // Store positions for server reports
+  lastRawPosMs=rawPosMs;
+  lastTargetMs=targetMs;
+  lastLocalMs=localSec*1000;
 
   // FIX #3: Don't compute or record error during settle (it's garbage after a seek)
   if(Date.now()<settleUntil){

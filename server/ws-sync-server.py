@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FPP WebSocket Sync Beacon v1.7.0
+FPP WebSocket Sync Beacon v1.7.2
 Polls FPP API every 100ms, broadcasts position to all WebSocket clients.
 Provides ping/pong for RTT-based clock offset estimation.
 Logs client sync reports to /home/fpp/listen-sync/sync.log.
@@ -40,8 +40,22 @@ current_state = {}
 
 
 def write_sync_log(client_ip, data):
-    """Append a client sync report to the sync log file."""
+    """Append a client sync report to the sync log file.
+    Auto-clears log on TRACK event (new song = fresh log)."""
     try:
+        event = data.get("event", "?")
+
+        # Auto-clear log on new track
+        if event == "TRACK":
+            if SYNC_LOG_PATH.exists():
+                SYNC_LOG_PATH.unlink()
+            track = data.get("track", "")
+            now = datetime.now()
+            ts = now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}"
+            with open(SYNC_LOG_PATH, "a") as f:
+                f.write(f"--- NEW TRACK: {track} @ {ts} [{client_ip}] ---\n")
+            return
+
         # Rotate if too large
         if SYNC_LOG_PATH.exists() and SYNC_LOG_PATH.stat().st_size > SYNC_LOG_MAX_BYTES:
             old = SYNC_LOG_PATH.with_suffix(".log.old")
@@ -49,13 +63,16 @@ def write_sync_log(client_ip, data):
                 old.unlink()
             SYNC_LOG_PATH.rename(old)
 
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.") + f"{datetime.now().microsecond // 1000:03d}"
-        event = data.get("event", "?")
+        now = datetime.now()
+        ts = now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}"
+        fpp = data.get("fpp", 0)
+        target = data.get("target", 0)
+        local = data.get("local", 0)
         err = data.get("err", 0)
         rate = data.get("rate", 1.0)
         offset = data.get("offset", 0)
         track = data.get("track", "")
-        line = f"{ts} [{client_ip}] {event} err={err}ms rate={rate} offset={offset}ms track={track}\n"
+        line = f"{ts} [{client_ip}] {event:12s} fpp={fpp:>7d} target={target:>7d} local={local:>7d} err={err:>5d}ms rate={rate:.4f} offset={offset:>4d}ms\n"
 
         with open(SYNC_LOG_PATH, "a") as f:
             f.write(line)
