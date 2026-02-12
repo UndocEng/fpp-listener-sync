@@ -101,6 +101,8 @@
   </div>
 
   <div id="logControls" class="hidden" style="margin-top:8px;text-align:right;">
+    <span id="logStatus" style="font-size:11px;color:#f90;margin-right:8px;"></span>
+    <button id="resumeLogBtn" style="font-size:12px;padding:4px 10px;width:auto;border:1px solid #555;background:#222;color:#aaa;display:none;">Resume Log</button>
     <button id="copyLogBtn" style="font-size:12px;padding:4px 10px;width:auto;border:1px solid #555;background:#222;color:#aaa;">Copy Log</button>
     <button id="clearLogBtn" style="font-size:12px;padding:4px 10px;width:auto;border:1px solid #555;background:#222;color:#aaa;">Clear Log</button>
   </div>
@@ -135,6 +137,7 @@ debugBox=document.getElementById('debugBox');
 
 // --- State ---
 let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0, settleUntil=0, syncBusy=false;
+let logFrozen=false, wasPlaying=false;
 
 // --- WebSocket ---
 const WS_RECONNECT_MS=2000;
@@ -162,7 +165,7 @@ const logBox=document.getElementById('logBox');
 const LOG_MAX=200;
 let logCount=0;
 function log(msg){
-  if(!debugCheck.checked)return;
+  if(!debugCheck.checked||logFrozen)return;
   const t=new Date();
   const ts=t.toTimeString().slice(0,8)+'.'+String(t.getMilliseconds()).padStart(3,'0');
   const line=ts+' '+msg+'\n';
@@ -176,6 +179,26 @@ function log(msg){
   logBox.scrollTop=logBox.scrollHeight;
 }
 
+// --- Server-side reporting ---
+const REPORT_INTERVAL_MS=2000;
+let lastReportMs=0;
+function sendReport(event,errMs,rate){
+  if(!ws||ws.readyState!==WebSocket.OPEN)return;
+  const now=Date.now();
+  // Throttle periodic reports to every 2s; immediate for seeks/track changes
+  const immediate=event==='SEEK'||event==='TRACK'||event==='INITIAL_SEEK'||event==='STOP';
+  if(!immediate&&(now-lastReportMs)<REPORT_INTERVAL_MS)return;
+  lastReportMs=now;
+  ws.send(JSON.stringify({
+    type:'report',
+    event:event,
+    err:Math.round(errMs||0),
+    rate:Number((rate||1.0).toFixed(4)),
+    offset:Math.round(clockOffset),
+    track:currentBase||''
+  }));
+}
+
 const logControls=document.getElementById('logControls');
 debugCheck.addEventListener('change',()=>{
   const show=debugCheck.checked;
@@ -186,7 +209,8 @@ debugCheck.addEventListener('change',()=>{
 document.getElementById('copyLogBtn').onclick=()=>{
   if(navigator.clipboard){navigator.clipboard.writeText(logBox.textContent).then(()=>{document.getElementById('copyLogBtn').textContent='Copied!';setTimeout(()=>{document.getElementById('copyLogBtn').textContent='Copy Log';},1500);});}
 };
-document.getElementById('clearLogBtn').onclick=()=>{logBox.textContent='';logCount=0;};
+document.getElementById('clearLogBtn').onclick=()=>{logBox.textContent='';logCount=0;logFrozen=false;document.getElementById('logStatus').textContent='';document.getElementById('resumeLogBtn').style.display='none';};
+document.getElementById('resumeLogBtn').onclick=()=>{logFrozen=false;document.getElementById('logStatus').textContent='';document.getElementById('resumeLogBtn').style.display='none';log('--- LOG RESUMED ---');};
 audio.addEventListener('loadedmetadata',()=>{haveMetadata=true;log('METADATA loaded');});
 audio.addEventListener('error',()=>{playErrEl.textContent="No matching audio file detected";log('AUDIO ERROR');});
 
@@ -387,6 +411,7 @@ async function syncInner(msg){
   // Track change
   if(msg.base&&msg.base!==currentBase){
     log('TRACK CHANGE: '+msg.base+' src='+msg.mp3_url);
+    sendReport('TRACK',0,1.0);
     currentBase=msg.base;
     haveMetadata=false;
     needInitialSeek=true;
@@ -400,12 +425,20 @@ async function syncInner(msg){
   // Stop
   if(msg.state==='stop'){
     log('STATE: stop');
+    sendReport('STOP',0,1.0);
     audio.pause();
     audio.currentTime=0;
     audio.playbackRate=1.0;
     errHistory2s=[];
     errHistoryAll=[];
     needInitialSeek=false;
+    // Freeze log when song ends so user can grab it
+    if(wasPlaying&&debugCheck.checked){
+      logFrozen=true;
+      document.getElementById('logStatus').textContent='Log frozen (song ended)';
+      document.getElementById('resumeLogBtn').style.display='';
+    }
+    wasPlaying=false;
     return;
   }
 
@@ -419,6 +452,8 @@ async function syncInner(msg){
     needInitialSeek=false;
     return;
   }
+
+  wasPlaying=true;
 
   // Start playback if needed (do this BEFORE time calculation to avoid stale reads)
   if(audio.paused){log('PLAY resuming (was paused)');await safePlay();}
@@ -482,6 +517,7 @@ async function syncInner(msg){
   if(needInitialSeek&&!audio.paused){
     const seekTo=Math.max(0,Math.min(audio.duration||999999,targetSec));
     log('INITIAL SEEK to='+Math.round(seekTo*1000)+'ms target='+Math.round(targetMs)+'ms');
+    sendReport('INITIAL_SEEK',errMs,1.0);
     audio.currentTime=seekTo;
     needInitialSeek=false;
     errHistory2s=[];
@@ -501,6 +537,7 @@ async function syncInner(msg){
     if(now-lastSeekMs>1500){
       const seekTo=Math.max(0,Math.min(audio.duration-0.05,targetSec));
       log('SEEK err='+Math.round(errMs)+'ms to='+Math.round(seekTo*1000)+'ms target='+Math.round(targetMs)+'ms local='+Math.round(localSec*1000)+'ms');
+      sendReport('SEEK',errMs,1.0);
       audio.currentTime=seekTo;
       lastSeekMs=now;
       errHistory2s=[];
@@ -526,6 +563,7 @@ async function syncInner(msg){
   const adjustment=errMs*0.00002;
   const newRate=clamp(1.0+adjustment,0.995,1.005);
   audio.playbackRate=newRate;
+  sendReport('RATE',errMs,newRate);
   if(++logThrottle%10===0)log('RATE err='+Math.round(errMs)+'ms rate='+newRate.toFixed(4)+' adj='+(adjustment*100).toFixed(3)+'%');
 }
 

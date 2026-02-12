@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-FPP WebSocket Sync Beacon v1.6.0
+FPP WebSocket Sync Beacon v1.7.0
 Polls FPP API every 100ms, broadcasts position to all WebSocket clients.
 Provides ping/pong for RTT-based clock offset estimation.
+Logs client sync reports to /home/fpp/listen-sync/sync.log.
 """
 
 import asyncio
@@ -12,6 +13,7 @@ import logging
 import urllib.request
 import urllib.parse
 from pathlib import Path
+from datetime import datetime
 
 try:
     import websockets
@@ -27,12 +29,38 @@ WS_PORT = 8080
 POLL_INTERVAL_MS = 100
 MUSIC_DIR = Path("/home/fpp/media/music")
 AUDIO_FORMATS = ["mp3", "m4a", "mp4", "aac", "ogg", "wav"]
+SYNC_LOG_PATH = Path("/home/fpp/listen-sync/sync.log")
+SYNC_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB max, then rotate
 
 logger = logging.getLogger("ws-sync")
 
 # --- Shared State ---
 clients = set()
 current_state = {}
+
+
+def write_sync_log(client_ip, data):
+    """Append a client sync report to the sync log file."""
+    try:
+        # Rotate if too large
+        if SYNC_LOG_PATH.exists() and SYNC_LOG_PATH.stat().st_size > SYNC_LOG_MAX_BYTES:
+            old = SYNC_LOG_PATH.with_suffix(".log.old")
+            if old.exists():
+                old.unlink()
+            SYNC_LOG_PATH.rename(old)
+
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.") + f"{datetime.now().microsecond // 1000:03d}"
+        event = data.get("event", "?")
+        err = data.get("err", 0)
+        rate = data.get("rate", 1.0)
+        offset = data.get("offset", 0)
+        track = data.get("track", "")
+        line = f"{ts} [{client_ip}] {event} err={err}ms rate={rate} offset={offset}ms track={track}\n"
+
+        with open(SYNC_LOG_PATH, "a") as f:
+            f.write(line)
+    except Exception as e:
+        logger.debug(f"Sync log write error: {e}")
 
 
 def basename_noext(path):
@@ -154,16 +182,20 @@ async def handle_client(websocket, path=None):
         if current_state:
             await websocket.send(json.dumps(current_state))
 
-        # Listen for client messages (ping for RTT measurement)
+        # Listen for client messages (ping for RTT, report for sync logging)
+        client_ip = remote[0] if remote else "unknown"
         async for message in websocket:
             try:
                 data = json.loads(message)
-                if data.get("type") == "ping":
+                msg_type = data.get("type")
+                if msg_type == "ping":
                     await websocket.send(json.dumps({
                         "type": "pong",
                         "client_ts": data.get("client_ts", 0),
                         "server_ts": int(time.time() * 1000)
                     }))
+                elif msg_type == "report":
+                    write_sync_log(client_ip, data)
             except json.JSONDecodeError:
                 pass
     except websockets.ConnectionClosed:
@@ -181,6 +213,15 @@ async def main():
 
     logger.info(f"Starting WebSocket sync beacon on port {WS_PORT}")
     logger.info(f"Polling FPP API every {POLL_INTERVAL_MS}ms")
+    logger.info(f"Client sync log: {SYNC_LOG_PATH}")
+
+    # Write separator to sync log on start
+    try:
+        SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(SYNC_LOG_PATH, "a") as f:
+            f.write(f"\n--- ws-sync started {datetime.now().isoformat()} ---\n")
+    except Exception:
+        pass
 
     poll_task = asyncio.create_task(fpp_poll_loop())
 
