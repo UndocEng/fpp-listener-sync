@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FPP WebSocket Sync Beacon v1.8.0
+FPP WebSocket Sync Beacon v1.8.1
 Polls FPP API every 100ms, broadcasts position to all WebSocket clients.
 Provides ping/pong for RTT-based clock offset estimation.
 Logs client sync reports to /home/fpp/listen-sync/sync.log.

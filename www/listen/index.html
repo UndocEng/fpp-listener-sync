@@ -174,7 +174,7 @@ let logThrottle=0;
 // CALIBRATE: measuring drift at rate=1.0 for 3 seconds
 // LOCKED: holding calibrated rate, only re-seek on large error
 let syncPhase='IDLE';
-let calStartWall=0, calStartErr=0, calSamples=[];
+let calStartWall=0, calSamples=[];
 const CAL_DURATION_MS=3000;
 let calibratedRate=1.0;
 let emergencySeekCount=0;
@@ -632,39 +632,58 @@ async function syncInner(msg){
       log('LOCKED (stored rate='+calibratedRate.toFixed(4)+')');
       sendReport('LOCKED',errMs,calibratedRate);
     }else{
+      // Start calibration: record FPP and local positions (raw, no extrapolation)
       calStartWall=Date.now();
-      calStartErr=errMs;
-      calSamples=[{t:0,e:errMs}];
+      calSamples=[{fpp:rawPosMs,local:localSec*1000}];
       syncPhase='CALIBRATE';
       syncPhaseEl.textContent='CALIBRATE';
-      log('CALIBRATE started err='+Math.round(errMs)+'ms');
+      log('CALIBRATE started fpp='+Math.round(rawPosMs)+' local='+Math.round(localSec*1000)+' err='+Math.round(errMs)+'ms');
       sendReport('CAL_START',errMs,1.0);
     }
     return;
   }
 
   // Phase: CALIBRATE - measuring drift at rate=1.0
+  // Collect raw FPP pos_ms and audio.currentTime samples (no extrapolation)
   if(syncPhase==='CALIBRATE'){
     audio.playbackRate=1.0;
     const calElapsed=Date.now()-calStartWall;
-    calSamples.push({t:calElapsed,e:errMs});
+    calSamples.push({fpp:rawPosMs,local:localSec*1000});
 
     if(calElapsed<CAL_DURATION_MS){
-      if(++logThrottle%10===0)log('CAL '+(calElapsed/1000).toFixed(1)+'/'+CAL_DURATION_MS/1000+'s err='+Math.round(errMs)+'ms');
+      if(++logThrottle%10===0)log('CAL '+(calElapsed/1000).toFixed(1)+'/'+CAL_DURATION_MS/1000+'s fpp='+Math.round(rawPosMs)+' local='+Math.round(localSec*1000)+' err='+Math.round(errMs)+'ms');
       sendReport('CAL',errMs,1.0);
       return;
     }
 
-    // Calibration complete - linear regression for robust drift estimate
-    const n=calSamples.length;
-    const sumX=calSamples.reduce((s,p)=>s+p.t,0);
-    const sumY=calSamples.reduce((s,p)=>s+p.e,0);
-    const sumXY=calSamples.reduce((s,p)=>s+p.t*p.e,0);
-    const sumX2=calSamples.reduce((s,p)=>s+p.t*p.t,0);
-    const denom=n*sumX2-sumX*sumX;
-    const slope=denom!==0?(n*sumXY-sumX*sumY)/denom:0;
-    // slope = ms_error_change per ms_wall → correction rate
-    calibratedRate=clamp(1.0+slope,0.95,1.05);
+    // Calibration complete - use averaged endpoints for robustness
+    const nSamples=calSamples.length;
+    const headN=Math.min(5,Math.floor(nSamples/3));
+    const tailN=headN;
+    const head=calSamples.slice(0,headN);
+    const tail=calSamples.slice(-tailN);
+    const avgHeadFpp=head.reduce((s,p)=>s+p.fpp,0)/headN;
+    const avgHeadLocal=head.reduce((s,p)=>s+p.local,0)/headN;
+    const avgTailFpp=tail.reduce((s,p)=>s+p.fpp,0)/tailN;
+    const avgTailLocal=tail.reduce((s,p)=>s+p.local,0)/tailN;
+
+    const dFpp=avgTailFpp-avgHeadFpp;    // how much FPP advanced
+    const dLocal=avgTailLocal-avgHeadLocal; // how much phone audio advanced
+
+    if(dFpp>100){
+      // phoneSpeed = how fast phone plays relative to FPP
+      // >1.0 means phone is faster, <1.0 means phone is slower
+      const phoneSpeed=dLocal/dFpp;
+      // Correction: divide by phoneSpeed to match FPP
+      // If phone is 1% fast (1.01), set rate to 1/1.01 ≈ 0.9901 (slow down)
+      // If phone is 1% slow (0.99), set rate to 1/0.99 ≈ 1.0101 (speed up)
+      calibratedRate=clamp(1.0/phoneSpeed,0.95,1.05);
+      // Sanity: if very close to 1.0, just use 1.0
+      if(Math.abs(calibratedRate-1.0)<0.001)calibratedRate=1.0;
+    }else{
+      calibratedRate=1.0;
+      log('CAL: dFpp too small ('+Math.round(dFpp)+'ms), using rate=1.0');
+    }
 
     // Seek to fix accumulated error
     const seekTo=clamp(targetSec,0,audio.duration-0.05);
@@ -684,8 +703,8 @@ async function syncInner(msg){
     syncPhase='LOCKED';
     syncPhaseEl.textContent='LOCKED';
 
-    const driftPerSec=slope*1000;
-    log('CAL DONE drift='+driftPerSec.toFixed(2)+'ms/s rate='+calibratedRate.toFixed(4)+' samples='+n);
+    const phoneSpeed=dFpp>100?(dLocal/dFpp):1.0;
+    log('CAL DONE dFpp='+Math.round(dFpp)+'ms dLocal='+Math.round(dLocal)+'ms speed='+phoneSpeed.toFixed(4)+' rate='+calibratedRate.toFixed(4)+' n='+nSamples);
     sendReport('CAL_DONE',errMs,calibratedRate);
     return;
   }
