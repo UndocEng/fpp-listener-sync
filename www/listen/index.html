@@ -172,6 +172,7 @@ let awaitingStart=false;
 let scheduledStartTarget=0;
 let lastCorrectionMs=0;
 let logThrottle=0;
+let lastSampledFppPos=-1; // only sample error when FPP pos_ms changes (avoids 1s quantization sawtooth)
 
 // --- Effective rate measurement ---
 let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
@@ -484,6 +485,7 @@ async function syncInner(msg){
     errHistoryAll=[];
     effRateWallMs=0;
     lastCheckMs=0;
+    lastSampledFppPos=-1;
   }
 
   // Stop
@@ -625,10 +627,16 @@ async function syncInner(msg){
   errEl.textContent=Math.round(errMs);
   audio.playbackRate=1.0;
 
-  // Collect error samples
-  checkSamples.push(errMs);
-  errHistoryAll.push(errMs);
-  if(errHistoryAll.length>100)errHistoryAll.shift();
+  // Collect error samples ONLY when FPP pos_ms changes (at the 1-second tick boundary).
+  // FPP reports pos_ms in 1-second steps. Between ticks, target stays flat while
+  // audio.currentTime advances, creating a ~900ms sawtooth artifact. Sampling only
+  // at tick boundaries gives clean readings (~1 per second, no sawtooth bias).
+  if(rawPosMs!==lastSampledFppPos){
+    lastSampledFppPos=rawPosMs;
+    checkSamples.push(errMs);
+    errHistoryAll.push(errMs);
+    if(errHistoryAll.length>100)errHistoryAll.shift();
+  }
 
   const avgCheck=checkSamples.length>0?(checkSamples.reduce((a,b)=>a+b,0)/checkSamples.length):0;
   const avgAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;
@@ -671,6 +679,7 @@ async function syncInner(msg){
       lastSeekMs=nowMs;
       lastCorrectionMs=nowMs;
       errHistoryAll=[];
+      lastSampledFppPos=-1;
       beginScheduledStart(targetSec);
       checkSamples=[];
       lastCheckMs=nowMs;
