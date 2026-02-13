@@ -113,3 +113,8 @@ echo ""
 
 ok "FPP Listener Sync removed. Reboot recommended."
 
+echo ""
+printf "Reboot now? (y/N) "
+read REPLY
+[ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ] && sudo reboot
+
