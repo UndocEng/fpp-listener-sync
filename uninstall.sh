@@ -15,11 +15,10 @@ echo ""
 
 echo "This will remove FPP Listener Sync and restore defaults."
 
-read -p "Continue? (y/N) " -n 1 -r
+printf "Continue? (y/N) "
+read REPLY
 
-echo ""
-
-[[ ! $REPLY =~ ^[Yy]$ ]] && echo "Cancelled." && exit 0
+[ "$REPLY" != "y" ] && [ "$REPLY" != "Y" ] && echo "Cancelled." && exit 0
 
 info "Stopping services..."
 
