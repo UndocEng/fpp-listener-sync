@@ -90,7 +90,9 @@
 
     <div><b>Error:</b> <span id="err">-</span> ms</div>
 
-    <div><b>Avg Error (5s):</b> <span id="avgErr5s">-</span> ms</div>
+    <div><b>PLL State:</b> <span id="pllState">idle</span></div>
+
+    <div><b>Rate:</b> <span id="pllRate">1.000</span>x</div>
 
     <div><b>Avg Error (all):</b> <span id="avgErrAll">-</span> ms</div>
 
@@ -101,8 +103,6 @@
     <div><b>Last Correction:</b> <span id="lastCorrection">-</span></div>
 
     <div><b>Play Latency:</b> <span id="playLatency">0</span> ms</div>
-
-    <div><b>Threshold:</b> <select id="thresholdSelect" style="background:#222;color:#aaa;border:1px solid #555;font-size:13px;"><option value="200">200 ms</option><option value="300" selected>300 ms</option><option value="500">500 ms</option></select></div>
 
   </div>
 
@@ -132,7 +132,8 @@ stateEl=document.getElementById('state'),
 targetEl=document.getElementById('target'),
 localEl=document.getElementById('local'),
 errEl=document.getElementById('err'),
-avgErr5sEl=document.getElementById('avgErr5s'),
+pllStateEl=document.getElementById('pllState'),
+pllRateEl=document.getElementById('pllRate'),
 avgErrAllEl=document.getElementById('avgErrAll'),
 effRateEl=document.getElementById('effRate'),
 bufferedEl=document.getElementById('buffered'),
@@ -141,8 +142,7 @@ playLatencyEl=document.getElementById('playLatency'),
 rttEl=document.getElementById('rtt'),
 offsetEl=document.getElementById('offset'),
 debugCheck=document.getElementById('debugCheck'),
-debugBox=document.getElementById('debugBox'),
-thresholdSelect=document.getElementById('thresholdSelect');
+debugBox=document.getElementById('debugBox');
 
 // --- State ---
 let enabled=false, currentBase="", pollTimer=null, haveMetadata=false, needInitialSeek=false, lastSeekMs=0, settleUntil=0, syncBusy=false;
@@ -163,19 +163,24 @@ const OFFSET_HISTORY_SIZE=8;
 let rttHistory=[];
 let offsetHistory=[];
 
-// --- Simple Sync: scheduled start + 5s check ---
-const CHECK_INTERVAL_MS=5000;
+// --- Scheduled start ---
 const LEAD_MS=2000;
-const SEEK_COOLDOWN_MS=3000;
-let seekThresholdMs=300;
-let lastCheckMs=0;
-let checkSamples=[];
-let errHistoryAll=[];
+const SEEK_COOLDOWN_MS=2000;
 let awaitingStart=false;
 let scheduledStartTarget=0;
 let lastCorrectionMs=0;
 let logThrottle=0;
-let lastSampledFppPos=-1; // only sample error when FPP pos_ms changes (avoids 1s quantization sawtooth)
+let errHistoryAll=[];
+
+// --- PLL constants ---
+const CAL_COUNT=6;       // samples to calibrate (~0.6s at 100ms WS)
+const Kp=0.3;            // proportional gain (rate adj per second of error)
+const MAX_ADJ=0.05;      // max ±5% rate deviation
+const HARD_SEEK_S=2.0;   // hard seek threshold (seconds)
+const RATE_EMA=0.05;     // EMA alpha for learning base rate
+
+// --- PLL state ---
+const pll={phase:'idle',samples:[],baseRate:1.0,anchorLocalMs:0,anchorFppMs:0};
 
 // --- Effective rate measurement ---
 let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
@@ -192,22 +197,28 @@ try{
   if(saved){const v=Number(saved);if(v>=0&&v<1000)playLatencyMs=v;}
 }catch(e){}
 
-// --- Threshold persistence ---
-const THRESHOLD_KEY='fpp-sync-threshold';
-try{
-  const saved=localStorage.getItem(THRESHOLD_KEY);
-  if(saved&&['200','300','500'].includes(saved)){
-    seekThresholdMs=parseInt(saved);
-    thresholdSelect.value=saved;
-  }
-}catch(e){}
-thresholdSelect.addEventListener('change',()=>{
-  seekThresholdMs=parseInt(thresholdSelect.value);
-  try{localStorage.setItem(THRESHOLD_KEY,thresholdSelect.value);}catch(e){}
-});
 
 // --- Helpers ---
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+
+function pllReset(){
+  pll.phase='idle';pll.samples=[];pll.baseRate=1.0;pll.anchorLocalMs=0;pll.anchorFppMs=0;
+}
+
+// Least-squares slope: ms of FPP time per ms of local time
+function linearSlope(samples){
+  if(samples.length<2)return 1.0;
+  const n=samples.length,first=samples[0];
+  let sumX=0,sumY=0,sumXX=0,sumXY=0;
+  for(let i=0;i<n;i++){
+    const x=samples[i].localMs-first.localMs;
+    const y=samples[i].fppMs-first.fppMs;
+    sumX+=x;sumY+=y;sumXX+=x*x;sumXY+=x*y;
+  }
+  const denom=n*sumXX-sumX*sumX;
+  if(Math.abs(denom)<1e-9)return 1.0;
+  return(n*sumXY-sumX*sumY)/denom;
+}
 
 const logBox=document.getElementById('logBox');
 const LOG_MAX=200;
@@ -498,11 +509,9 @@ async function syncInner(msg){
     audio.playbackRate=1.0;
     audio.src=msg.mp3_url||'';
     audio.load();
-    checkSamples=[];
+    pllReset();
     errHistoryAll=[];
     effRateWallMs=0;
-    lastCheckMs=0;
-    lastSampledFppPos=-1;
   }
 
   // Stop
@@ -519,7 +528,7 @@ async function syncInner(msg){
     audio.pause();
     audio.currentTime=0;
     audio.playbackRate=1.0;
-    checkSamples=[];
+    pllReset();
     errHistoryAll=[];
     needInitialSeek=false;
     awaitingStart=false;
@@ -532,7 +541,7 @@ async function syncInner(msg){
     log('STATE: pause');
     audio.pause();
     audio.playbackRate=1.0;
-    checkSamples=[];
+    pllReset();
     errHistoryAll=[];
     needInitialSeek=false;
     awaitingStart=false;
@@ -656,25 +665,13 @@ async function syncInner(msg){
     safePlay().finally(()=>{playAttempting=false;});
   }
 
-  // --- Normal operation ---
+  // --- Normal operation: PLL sync ---
   errEl.textContent=Math.round(errMs);
-  audio.playbackRate=1.0;
 
-  // Collect error samples ONLY when FPP pos_ms changes (at the 1-second tick boundary).
-  // FPP reports pos_ms in 1-second steps. Between ticks, target stays flat while
-  // audio.currentTime advances, creating a ~900ms sawtooth artifact. Sampling only
-  // at tick boundaries gives clean readings (~1 per second, no sawtooth bias).
-  if(rawPosMs!==lastSampledFppPos){
-    lastSampledFppPos=rawPosMs;
-    checkSamples.push(errMs);
-    errHistoryAll.push(errMs);
-    if(errHistoryAll.length>100)errHistoryAll.shift();
-    sendReport('SYNC',errMs,1.0);
-  }
-
-  const avgCheck=checkSamples.length>0?(checkSamples.reduce((a,b)=>a+b,0)/checkSamples.length):0;
+  // Track error history for diagnostics
+  errHistoryAll.push(errMs);
+  if(errHistoryAll.length>100)errHistoryAll.shift();
   const avgAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;
-  avgErr5sEl.textContent=Math.round(avgCheck);
   avgErrAllEl.textContent=Math.round(avgAll);
 
   let bufferedSec=0;
@@ -700,32 +697,87 @@ async function syncInner(msg){
     effRateLocalMs=localSec*1000;
   }
 
-  // --- 5-second check ---
-  if(lastCheckMs===0)lastCheckMs=nowMs;
+  const localMs=performance.now();
+  const fppMs=targetMs;
 
-  if((nowMs-lastCheckMs)>=CHECK_INTERVAL_MS){
-    const latestErr=checkSamples.length>0?checkSamples[checkSamples.length-1]:0;
-    log('CHECK latest='+Math.round(latestErr)+'ms samples='+checkSamples.length+' threshold='+seekThresholdMs+'ms');
-
-    if(Math.abs(latestErr)>seekThresholdMs&&(nowMs-lastSeekMs)>SEEK_COOLDOWN_MS){
-      log('CORRECTION err='+Math.round(latestErr)+'ms — scheduling resync');
-      sendReport('CORRECTION',latestErr,1.0);
-      lastSeekMs=nowMs;
-      lastCorrectionMs=nowMs;
-      errHistoryAll=[];
-      lastSampledFppPos=-1;
-      beginScheduledStart(targetSec);
-      checkSamples=[];
-      lastCheckMs=nowMs;
-      return;
-    }
-
-    checkSamples=[];
-    lastCheckMs=nowMs;
+  // --- PLL Phase: Idle → start calibrating ---
+  if(pll.phase==='idle'){
+    pll.phase='calibrating';
+    pll.samples=[{localMs,fppMs}];
+    audio.playbackRate=1.0;
+    pllStateEl.textContent='calibrating';
+    pllRateEl.textContent='1.000';
+    log('PLL: calibrating ('+CAL_COUNT+' samples)');
+    sendReport('SYNC',errMs,1.0);
+    return;
   }
 
+  // --- PLL Phase: Calibrating ---
+  if(pll.phase==='calibrating'){
+    pll.samples.push({localMs,fppMs});
+    pllStateEl.textContent='cal '+pll.samples.length+'/'+CAL_COUNT;
+    pllRateEl.textContent='1.000';
+    errEl.textContent=Math.round(errMs)+' (cal)';
+
+    if(pll.samples.length>=CAL_COUNT){
+      pll.baseRate=linearSlope(pll.samples);
+      if(pll.baseRate<0.95||pll.baseRate>1.05)pll.baseRate=1.0;
+      pll.anchorLocalMs=localMs;
+      pll.anchorFppMs=fppMs;
+      pll.phase='locked';
+      audio.playbackRate=pll.baseRate;
+      pllStateEl.textContent='locked';
+      log('PLL: locked baseRate='+pll.baseRate.toFixed(4));
+    }
+    sendReport('SYNC',errMs,audio.playbackRate);
+    return;
+  }
+
+  // --- PLL Phase: Locked ---
+  const phaseErr=targetSec-localSec;
+  pllStateEl.textContent='locked';
+
+  // Hard seek if way off (>2s), with cooldown
+  if(Math.abs(phaseErr)>HARD_SEEK_S&&(nowMs-lastSeekMs)>SEEK_COOLDOWN_MS){
+    log('PLL: HARD SEEK err='+Math.round(phaseErr*1000)+'ms');
+    sendReport('CORRECTION',phaseErr*1000,audio.playbackRate);
+    audio.currentTime=clamp(targetSec,0,Math.max(0,audio.duration-0.1));
+    lastSeekMs=nowMs;
+    lastCorrectionMs=nowMs;
+    pll.phase='calibrating';
+    pll.samples=[{localMs,fppMs}];
+    pllStateEl.textContent='calibrating';
+    errHistoryAll=[];
+    if(audio.paused&&!playAttempting){
+      playAttempting=true;
+      safePlay().finally(()=>{playAttempting=false;});
+    }
+    return;
+  }
+
+  // Proportional rate correction
+  let rate=pll.baseRate+Kp*phaseErr;
+  rate=clamp(rate,1-MAX_ADJ,1+MAX_ADJ);
+  audio.playbackRate=rate;
+  pllRateEl.textContent=rate.toFixed(3);
+
+  // Learn: update baseRate from longer observation window
+  const dtLocal=localMs-pll.anchorLocalMs;
+  if(dtLocal>2000){
+    const dtFpp=fppMs-pll.anchorFppMs;
+    const instRate=dtFpp/dtLocal;
+    if(instRate>0.95&&instRate<1.05){
+      pll.baseRate=pll.baseRate*(1-RATE_EMA)+instRate*RATE_EMA;
+    }
+    pll.anchorLocalMs=localMs;
+    pll.anchorFppMs=fppMs;
+  }
+
+  // Report periodically
+  sendReport('SYNC',errMs,rate);
+
   // Periodic logging
-  if(++logThrottle%20===0)log('SYNC err='+Math.round(errMs)+'ms avg5s='+Math.round(avgCheck)+'ms avgAll='+Math.round(avgAll)+'ms eff='+lastEffRate.toFixed(4));
+  if(++logThrottle%20===0)log('PLL err='+Math.round(errMs)+'ms rate='+rate.toFixed(3)+'x base='+pll.baseRate.toFixed(4)+' avgAll='+Math.round(avgAll)+'ms');
 }
 
 // Fetch and display version (cache-busting)
