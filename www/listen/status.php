@@ -98,11 +98,7 @@ $seq = isset($src["current_sequence"]) ? strval($src["current_sequence"]) : "";
 $base = basename_noext($seq);
 
 
-$sec_played = 0.0;
-
-if (isset($src["seconds_played"])) $sec_played = floatval($src["seconds_played"]);
-
-$pos_ms = intval($sec_played * 1000.0);
+$pos_ms = isset($src["milliseconds_elapsed"]) ? intval($src["milliseconds_elapsed"]) : 0;
 
 
 // Check for audio file - prefer MP3, fall back to M4A, then other formats
@@ -147,6 +143,6 @@ echo json_encode([
 
   "debug_seq" => $seq,
 
-  "debug_seconds_played" => $sec_played
+  "debug_milliseconds_elapsed" => $pos_ms
 
 ]);
