@@ -178,7 +178,7 @@ let errHistoryAll=[];
 let errHistory2s=[];  // timestamped: [{t,err}]
 
 // --- PLL constants ---
-const CAL_MIN_MS=1500;   // minimum calibration window (ms) for regression
+const CAL_MIN_MS=800;    // minimum calibration window (ms) for regression
 const Kp=0.01;           // log-proportional gain (very gentle)
 const MAX_ADJ=0.05;      // max ±5% rate deviation
 const DEAD_ZONE_MS=20;   // no correction below this — prevents oscillation
@@ -620,7 +620,7 @@ async function syncInner(msg){
     audio.currentTime=clamp(targetSec,0,Math.max(0,audio.duration-0.1));
     log('PLAY NOW: seek to '+Math.round(targetSec*1000)+'ms, will snap-correct after 3s settle');
     sendReport('INITIAL_SEEK',errMs,1.0);
-    settleUntil=nowMs+3000;
+    settleUntil=nowMs+1500;
     effRateWallMs=nowMs;
     effRateLocalMs=targetSec*1000;
     playCallWallMs=Date.now();
