@@ -739,7 +739,7 @@ async function syncInner(msg){
 
     if(calSpanMs>=CAL_MIN_MS&&pll.samples.length>=6){
       pll.baseRate=linearSlope(pll.samples);
-      if(pll.baseRate<0.95||pll.baseRate>1.05)pll.baseRate=1.0;
+      if(pll.baseRate<0.99||pll.baseRate>1.01)pll.baseRate=1.0;
       pll.phase='locked';
       // No snap-seek: let adaptive PLL converge smoothly from initial error
       pll.anchorLocalMs=localMs;
