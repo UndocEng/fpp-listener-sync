@@ -808,7 +808,7 @@ async function syncInner(msg){
   }
 
   // Report periodically
-  sendReport('SYNC',errMs,rate);
+  sendReport('SYNC',errMs,audio.playbackRate);
 
   // Periodic logging
   if(++logThrottle%20===0)log('PLL err='+Math.round(phaseErr*1000)+'ms rate='+audio.playbackRate.toFixed(3)+'x base='+pll.baseRate.toFixed(4));
