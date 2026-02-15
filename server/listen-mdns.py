@@ -44,19 +44,26 @@ def main():
         'org.freedesktop.Avahi.EntryGroup'
     )
 
-    # AddAddress(interface, protocol, flags, name, address)
-    #   interface: OS interface index (wlan1 only)
-    #   protocol:  0 = IPv4
-    #   flags:     NO_REVERSE (32) — don't publish reverse PTR record.
-    #              The Pi already has a PTR for 192.168.50.1 → fpp.local;
-    #              adding a second PTR for the same IP causes a collision.
-    AVAHI_PUBLISH_NO_REVERSE = dbus.UInt32(32)
-    group.AddAddress(
+    # Use AddRecord to publish a raw DNS A record instead of AddAddress.
+    # AddAddress also creates a reverse PTR record (192.168.50.1 → listen.local)
+    # which collides with the existing PTR for fpp.local at the same IP.
+    # AddRecord lets us publish just the forward A record on wlan1 only.
+    #
+    # AddRecord(interface, protocol, flags, name, clazz, type, rdata)
+    #   clazz: 1 = DNS class IN
+    #   type:  1 = DNS type A (IPv4 address)
+    #   rdata: 4 bytes of IPv4 address (192.168.50.1 = 0xC0A83201)
+    DNS_CLASS_IN = dbus.UInt16(1)
+    DNS_TYPE_A = dbus.UInt16(1)
+    ip_bytes = dbus.Array([dbus.Byte(int(b)) for b in ADDRESS.split('.')], signature='y')
+    group.AddRecord(
         dbus.Int32(ifindex),
-        dbus.Int32(0),
-        AVAHI_PUBLISH_NO_REVERSE,
+        dbus.Int32(0),       # protocol: IPv4
+        dbus.UInt32(0),      # flags: none
         HOSTNAME,
-        ADDRESS
+        DNS_CLASS_IN,
+        DNS_TYPE_A,
+        ip_bytes
     )
     group.Commit()
 
