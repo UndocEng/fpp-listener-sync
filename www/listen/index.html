@@ -614,51 +614,25 @@ async function syncInner(msg){
     return;
   }
 
-  // --- Scheduled start: waiting for metadata before we can seek ---
+  // --- Immediate start: seek to target and play right away ---
   if(needInitialSeek&&haveMetadata){
     needInitialSeek=false;
-    log('INITIAL: scheduling start, target='+Math.round(targetMs)+'ms');
+    audio.currentTime=clamp(targetSec,0,Math.max(0,audio.duration-0.1));
+    log('PLAY NOW: seek to '+Math.round(targetSec*1000)+'ms, will snap-correct after 3s settle');
     sendReport('INITIAL_SEEK',errMs,1.0);
-    beginScheduledStart(targetSec);
+    settleUntil=nowMs+3000;
+    effRateWallMs=nowMs;
+    effRateLocalMs=targetSec*1000;
+    playCallWallMs=Date.now();
+    playCallAudioPos=audio.currentTime;
+    playAttempting=true;
+    safePlay().finally(()=>{playAttempting=false;});
+    sendReport('START',0,1.0);
     return;
   }
 
   if(needInitialSeek){
     // Still waiting for metadata
-    return;
-  }
-
-  // --- Awaiting scheduled start: paused, waiting for FPP to reach our position ---
-  if(awaitingStart){
-    const waitingForMs=scheduledStartTarget*1000;
-    const remainMs=waitingForMs-targetMs;
-
-    // FPP jumped backward past our target (operator rewind) — re-schedule
-    if(remainMs>LEAD_MS+1000){
-      log('RESCHEDULE: FPP jumped back, remain='+Math.round(remainMs)+'ms');
-      beginScheduledStart(targetSec);
-      return;
-    }
-
-    const playAheadMs=playLatencyMs; // fire play() this much before FPP arrives
-    if(targetMs>=(waitingForMs-playAheadMs)){
-      // FPP is close enough — fire play() early to compensate for startup latency
-      awaitingStart=false;
-      log('PLAY! landed='+Math.round(waitingForMs)+'ms fpp='+Math.round(targetMs)+'ms ahead='+Math.round(playAheadMs)+'ms');
-      settleUntil=nowMs+3000;
-      effRateWallMs=nowMs;
-      effRateLocalMs=scheduledStartTarget*1000;
-      // Start measuring play() latency
-      playCallWallMs=Date.now();
-      playCallAudioPos=audio.currentTime;
-      playAttempting=true;
-      safePlay().finally(()=>{playAttempting=false;});
-      sendReport('START',0,1.0);
-    }else{
-      // Still waiting
-      errEl.textContent='(waiting '+Math.round(remainMs)+'ms)';
-      if(++logThrottle%20===0)log('WAITING remain='+Math.round(remainMs)+'ms target='+Math.round(targetMs)+'ms landed='+Math.round(waitingForMs)+'ms');
-    }
     return;
   }
 
