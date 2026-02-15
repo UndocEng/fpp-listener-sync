@@ -151,7 +151,7 @@ let pendingMsg=null, playAttempting=false;
 
 // --- WebSocket ---
 const WS_RECONNECT_MS=2000;
-const WS_PING_INTERVAL_MS=3000;
+const WS_PING_INTERVAL_MS=1000;
 const HTTP_POLL_MS=250;
 
 let ws=null, wsConnected=false, wsPingTimer=null, wsReconnectTimer=null;
@@ -160,6 +160,7 @@ let ws=null, wsConnected=false, wsPingTimer=null, wsReconnectTimer=null;
 let clockOffset=0, clockOffsetValid=false;
 const RTT_HISTORY_SIZE=5;
 const OFFSET_HISTORY_SIZE=8;
+const MIN_OFFSET_SAMPLES=3;  // require 3+ offset samples before sync
 let rttHistory=[];
 let offsetHistory=[];
 
@@ -173,7 +174,7 @@ let logThrottle=0;
 let errHistoryAll=[];
 
 // --- PLL constants ---
-const CAL_COUNT=6;       // samples to calibrate (~0.6s at 100ms WS)
+const CAL_MIN_MS=1500;   // minimum calibration window (ms) for regression
 const Kp=0.3;            // proportional gain (rate adj per second of error)
 const MAX_ADJ=0.05;      // max ±5% rate deviation
 const HARD_SEEK_S=2.0;   // hard seek threshold (seconds)
@@ -317,9 +318,16 @@ function connectWebSocket(){
     clockOffset=0;
     pollEl.textContent='WebSocket connected';
     fetchErrEl.textContent='';
-    wsPingTimer=setInterval(sendPing,WS_PING_INTERVAL_MS);
+    // Burst 5 rapid pings for fast clock calibration (0/200/400/600/800ms)
     sendPing();
-    log('WS CONNECTED, offset reset');
+    setTimeout(sendPing,200);
+    setTimeout(sendPing,400);
+    setTimeout(sendPing,600);
+    setTimeout(sendPing,800);
+    // Then steady-state pings every 1s
+    if(wsPingTimer)clearInterval(wsPingTimer);
+    wsPingTimer=setInterval(sendPing,WS_PING_INTERVAL_MS);
+    log('WS CONNECTED, burst clock cal');
   };
 
   ws.onmessage=(event)=>{
@@ -565,7 +573,7 @@ async function syncInner(msg){
       elapsed=nowMs-serverMs;
     }
     if(!Number.isFinite(elapsed))elapsed=0;
-    elapsed=clamp(elapsed,0,1500);
+    elapsed=clamp(elapsed,0,300);
     targetMs=rawPosMs+elapsed;
   }else{
     log('SERVER_MS INVALID: '+serverMs+' nowMs='+nowMs+' diff='+Math.abs(nowMs-serverMs));
@@ -589,6 +597,13 @@ async function syncInner(msg){
     lastCorrectionEl.textContent=ago+'s ago';
   }
   playLatencyEl.textContent=Math.round(playLatencyMs);
+
+  // --- Gate: need confident clock offset before any sync ---
+  if(offsetHistory.length<MIN_OFFSET_SAMPLES){
+    errEl.textContent='(clock cal '+offsetHistory.length+'/'+MIN_OFFSET_SAMPLES+')';
+    if(++logThrottle%10===0)log('CLOCK CAL: '+offsetHistory.length+'/'+MIN_OFFSET_SAMPLES+' offset samples');
+    return;
+  }
 
   // --- Scheduled start: waiting for metadata before we can seek ---
   if(needInitialSeek&&haveMetadata){
@@ -621,8 +636,6 @@ async function syncInner(msg){
       // FPP is close enough — fire play() early to compensate for startup latency
       awaitingStart=false;
       log('PLAY! landed='+Math.round(waitingForMs)+'ms fpp='+Math.round(targetMs)+'ms ahead='+Math.round(playAheadMs)+'ms');
-      lastCheckMs=nowMs;
-      checkSamples=[];
       settleUntil=nowMs+3000;
       effRateWallMs=nowMs;
       effRateLocalMs=scheduledStartTarget*1000;
@@ -641,20 +654,32 @@ async function syncInner(msg){
   }
 
   // --- Settle period after play starts ---
+  // Measures play() latency AND collects PLL calibration samples simultaneously.
+  // When settle ends, PLL is ready to lock immediately (no dead zone).
   if(nowMs<settleUntil){
     // Measure play() latency: detect when audio.currentTime actually advances
     if(playCallWallMs>0&&audio.currentTime!==playCallAudioPos){
       const measuredMs=Date.now()-playCallWallMs;
-      // EWMA: blend new measurement with stored estimate (alpha=0.5)
       playLatencyMs=playLatencyMs>0?(playLatencyMs*0.5+measuredMs*0.5):measuredMs;
-      // Clamp to sane range (0-500ms)
       playLatencyMs=clamp(playLatencyMs,0,500);
       log('PLAY_LATENCY measured='+measuredMs+'ms estimate='+Math.round(playLatencyMs)+'ms');
       try{localStorage.setItem(PLAY_LATENCY_KEY,Math.round(playLatencyMs).toString());}catch(e){}
-      playCallWallMs=0; // done measuring
+      playCallWallMs=0;
+    }
+    // Collect PLL calibration samples during settle (no rate corrections yet)
+    const sLocalMs=performance.now();
+    const sFppMs=targetMs;
+    if(pll.phase==='idle'){
+      pll.phase='calibrating';
+      pll.samples=[{localMs:sLocalMs,fppMs:sFppMs}];
+      pllStateEl.textContent='calibrating';
+      log('PLL: calibrating during settle');
+    }else if(pll.phase==='calibrating'){
+      pll.samples.push({localMs:sLocalMs,fppMs:sFppMs});
+      pllStateEl.textContent='cal '+pll.samples.length;
     }
     errEl.textContent='(settling)';
-    if(++logThrottle%10===0)log('SETTLE remaining='+(settleUntil-nowMs)+'ms');
+    if(++logThrottle%10===0)log('SETTLE remaining='+(settleUntil-nowMs)+'ms samples='+pll.samples.length);
     return;
   }
 
@@ -707,19 +732,20 @@ async function syncInner(msg){
     audio.playbackRate=1.0;
     pllStateEl.textContent='calibrating';
     pllRateEl.textContent='1.000';
-    log('PLL: calibrating ('+CAL_COUNT+' samples)');
+    log('PLL: calibrating (need '+CAL_MIN_MS+'ms window)');
     sendReport('SYNC',errMs,1.0);
     return;
   }
 
-  // --- PLL Phase: Calibrating ---
+  // --- PLL Phase: Calibrating (time-based window) ---
   if(pll.phase==='calibrating'){
     pll.samples.push({localMs,fppMs});
-    pllStateEl.textContent='cal '+pll.samples.length+'/'+CAL_COUNT;
+    const calSpanMs=pll.samples.length>1?(pll.samples[pll.samples.length-1].localMs-pll.samples[0].localMs):0;
+    pllStateEl.textContent='cal '+Math.round(calSpanMs)+'ms';
     pllRateEl.textContent='1.000';
     errEl.textContent=Math.round(errMs)+' (cal)';
 
-    if(pll.samples.length>=CAL_COUNT){
+    if(calSpanMs>=CAL_MIN_MS&&pll.samples.length>=6){
       pll.baseRate=linearSlope(pll.samples);
       if(pll.baseRate<0.95||pll.baseRate>1.05)pll.baseRate=1.0;
       pll.anchorLocalMs=localMs;
@@ -727,7 +753,7 @@ async function syncInner(msg){
       pll.phase='locked';
       audio.playbackRate=pll.baseRate;
       pllStateEl.textContent='locked';
-      log('PLL: locked baseRate='+pll.baseRate.toFixed(4));
+      log('PLL: locked baseRate='+pll.baseRate.toFixed(4)+' from '+pll.samples.length+' samples over '+Math.round(calSpanMs)+'ms');
     }
     sendReport('SYNC',errMs,audio.playbackRate);
     return;
@@ -737,16 +763,15 @@ async function syncInner(msg){
   const phaseErr=targetSec-localSec;
   pllStateEl.textContent='locked';
 
-  // Hard seek if way off (>2s), with cooldown
+  // Hard seek if way off (>2s), with cooldown — stay locked, just reset anchor
   if(Math.abs(phaseErr)>HARD_SEEK_S&&(nowMs-lastSeekMs)>SEEK_COOLDOWN_MS){
-    log('PLL: HARD SEEK err='+Math.round(phaseErr*1000)+'ms');
+    log('PLL: HARD SEEK err='+Math.round(phaseErr*1000)+'ms (staying locked)');
     sendReport('CORRECTION',phaseErr*1000,audio.playbackRate);
     audio.currentTime=clamp(targetSec,0,Math.max(0,audio.duration-0.1));
     lastSeekMs=nowMs;
     lastCorrectionMs=nowMs;
-    pll.phase='calibrating';
-    pll.samples=[{localMs,fppMs}];
-    pllStateEl.textContent='calibrating';
+    pll.anchorLocalMs=localMs;
+    pll.anchorFppMs=fppMs;
     errHistoryAll=[];
     if(audio.paused&&!playAttempting){
       playAttempting=true;

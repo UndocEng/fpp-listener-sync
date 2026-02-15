@@ -138,8 +138,7 @@ def parse_fpp_state(src, server_ms):
 
     seq = str(src.get("current_sequence", ""))
     base = basename_noext(seq)
-    sec_played = float(src.get("seconds_played", 0.0))
-    pos_ms = int(sec_played * 1000.0)
+    pos_ms = int(src.get("milliseconds_elapsed", 0))
     mp3_url = find_audio_file(base)
 
     return {
