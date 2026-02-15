@@ -94,6 +94,8 @@
 
     <div><b>Rate:</b> <span id="pllRate">1.000</span>x</div>
 
+    <div><b>Avg Error (2s):</b> <span id="avgErr2s">-</span> ms</div>
+
     <div><b>Avg Error (all):</b> <span id="avgErrAll">-</span> ms</div>
 
     <div><b>Effective Rate:</b> <span id="effRate">-</span></div>
@@ -134,6 +136,7 @@ localEl=document.getElementById('local'),
 errEl=document.getElementById('err'),
 pllStateEl=document.getElementById('pllState'),
 pllRateEl=document.getElementById('pllRate'),
+avgErr2sEl=document.getElementById('avgErr2s'),
 avgErrAllEl=document.getElementById('avgErrAll'),
 effRateEl=document.getElementById('effRate'),
 bufferedEl=document.getElementById('buffered'),
@@ -172,6 +175,7 @@ let scheduledStartTarget=0;
 let lastCorrectionMs=0;
 let logThrottle=0;
 let errHistoryAll=[];
+let errHistory2s=[];  // timestamped: [{t,err}]
 
 // --- PLL constants ---
 const CAL_MIN_MS=1500;   // minimum calibration window (ms) for regression
@@ -522,7 +526,7 @@ async function syncInner(msg){
     audio.src=msg.mp3_url||'';
     audio.load();
     pllReset();
-    errHistoryAll=[];
+    errHistoryAll=[];errHistory2s=[];
     effRateWallMs=0;
   }
 
@@ -541,7 +545,7 @@ async function syncInner(msg){
     audio.currentTime=0;
     audio.playbackRate=1.0;
     pllReset();
-    errHistoryAll=[];
+    errHistoryAll=[];errHistory2s=[];
     needInitialSeek=false;
     awaitingStart=false;
     wasPlaying=false;
@@ -554,7 +558,7 @@ async function syncInner(msg){
     audio.pause();
     audio.playbackRate=1.0;
     pllReset();
-    errHistoryAll=[];
+    errHistoryAll=[];errHistory2s=[];
     needInitialSeek=false;
     awaitingStart=false;
     return;
@@ -703,6 +707,12 @@ async function syncInner(msg){
   const avgAll=errHistoryAll.length>0?(errHistoryAll.reduce((a,b)=>a+b,0)/errHistoryAll.length):0;
   avgErrAllEl.textContent=Math.round(avgAll);
 
+  // 2-second rolling average
+  errHistory2s.push({t:nowMs,err:errMs});
+  while(errHistory2s.length>0&&(nowMs-errHistory2s[0].t)>2000)errHistory2s.shift();
+  const avg2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b.err,0)/errHistory2s.length):0;
+  avgErr2sEl.textContent=Math.round(avg2s);
+
   let bufferedSec=0;
   if(audio.buffered.length>0){bufferedSec=audio.buffered.end(audio.buffered.length-1)-localSec;}
   bufferedEl.textContent=bufferedSec.toFixed(1);
@@ -784,7 +794,7 @@ async function syncInner(msg){
     lastCorrectionMs=nowMs;
     pll.anchorLocalMs=localMs;
     pll.anchorFppMs=fppMs;
-    errHistoryAll=[];
+    errHistoryAll=[];errHistory2s=[];
     if(audio.paused&&!playAttempting){
       playAttempting=true;
       safePlay().finally(()=>{playAttempting=false;});
