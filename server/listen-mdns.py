@@ -49,20 +49,20 @@ def main():
     # which collides with the existing PTR for fpp.local at the same IP.
     # AddRecord lets us publish just the forward A record on wlan1 only.
     #
-    # AddRecord(interface, protocol, flags, name, clazz, type, rdata)
+    # AddRecord(interface, protocol, flags, name, clazz, type, ttl, rdata)
     #   clazz: 1 = DNS class IN
     #   type:  1 = DNS type A (IPv4 address)
+    #   ttl:   120 = 2 minutes (standard mDNS TTL)
     #   rdata: 4 bytes of IPv4 address (192.168.50.1 = 0xC0A83201)
-    DNS_CLASS_IN = dbus.UInt16(1)
-    DNS_TYPE_A = dbus.UInt16(1)
     ip_bytes = dbus.Array([dbus.Byte(int(b)) for b in ADDRESS.split('.')], signature='y')
     group.AddRecord(
         dbus.Int32(ifindex),
         dbus.Int32(0),       # protocol: IPv4
         dbus.UInt32(0),      # flags: none
         HOSTNAME,
-        DNS_CLASS_IN,
-        DNS_TYPE_A,
+        dbus.UInt16(1),      # clazz: IN
+        dbus.UInt16(1),      # type: A
+        dbus.UInt32(120),    # ttl: 120 seconds
         ip_bytes
     )
     group.Commit()
