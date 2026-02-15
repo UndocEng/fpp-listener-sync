@@ -179,21 +179,17 @@ let errHistory2s=[];  // timestamped: [{t,err}]
 
 // --- PLL constants ---
 const CAL_MIN_MS=800;    // minimum calibration window (ms) for regression
-const Kp_FAST=0.05;      // aggressive gain for first 10s after lock
-const Kp_SLOW=0.01;      // gentle gain after convergence
-const FAST_PHASE_MS=10000; // duration of fast phase after PLL lock
+const Kp_BASE=0.01;      // base proportional gain
+const Kp_SCALE=4;        // adaptive multiplier: Kp = Kp_BASE * (1 + Kp_SCALE * |avg2s|/200)
 const MAX_ADJ=0.05;      // max ±5% rate deviation
-const DEAD_ZONE_MS=0;    // no dead zone during fast phase (restored after)
-const DEAD_ZONE_SLOW=20; // dead zone after fast phase
+const DEAD_ZONE_MS=20;   // dead zone when avg2s is small
 const LOG_SCALE_MS=100;  // log compression denominator (higher = gentler)
 const HARD_SEEK_S=2.0;   // hard seek threshold (seconds)
 const RATE_EMA=0.05;     // EMA alpha for learning base rate
-const MIN_RATE_CHANGE=0.003; // lower threshold during fast phase
-const RATE_UPDATE_FAST=500;  // re-evaluate rate every 500ms during fast phase
-const RATE_UPDATE_SLOW=2000; // re-evaluate rate every 2s after convergence
+const MIN_RATE_CHANGE=0.003;
 
 // --- PLL state ---
-const pll={phase:'idle',samples:[],baseRate:1.0,anchorLocalMs:0,anchorFppMs:0,lastRateUpdateMs:0,lockTimeMs:0};
+const pll={phase:'idle',samples:[],baseRate:1.0,anchorLocalMs:0,anchorFppMs:0,lastRateUpdateMs:0};
 
 // --- Effective rate measurement ---
 let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
@@ -215,7 +211,7 @@ try{
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 
 function pllReset(){
-  pll.phase='idle';pll.samples=[];pll.baseRate=1.0;pll.anchorLocalMs=0;pll.anchorFppMs=0;pll.lastRateUpdateMs=0;pll.lockTimeMs=0;
+  pll.phase='idle';pll.samples=[];pll.baseRate=1.0;pll.anchorLocalMs=0;pll.anchorFppMs=0;pll.lastRateUpdateMs=0;
   if(audio)audio.playbackRate=1.0;
 }
 
@@ -745,7 +741,6 @@ async function syncInner(msg){
       pll.baseRate=linearSlope(pll.samples);
       if(pll.baseRate<0.95||pll.baseRate>1.05)pll.baseRate=1.0;
       pll.phase='locked';
-      pll.lockTimeMs=nowMs;
       // Snap-seek to correct position if off by >50ms
       const lockErr=targetSec-localSec;
       if(Math.abs(lockErr)>0.05){
@@ -785,12 +780,12 @@ async function syncInner(msg){
     return;
   }
 
-  // Two-phase PLL: fast (first 10s after lock) then slow (steady state)
-  const inFastPhase=pll.lockTimeMs>0&&(nowMs-pll.lockTimeMs)<FAST_PHASE_MS;
-  const Kp=inFastPhase?Kp_FAST:Kp_SLOW;
-  const deadZone=inFastPhase?DEAD_ZONE_MS:DEAD_ZONE_SLOW;
-  const rateInterval=inFastPhase?RATE_UPDATE_FAST:RATE_UPDATE_SLOW;
-  pllStateEl.textContent=inFastPhase?'locked (fast)':'locked';
+  // Adaptive PLL: gain scales with avg2s magnitude
+  const absAvg2s=Math.abs(lastAvg2s);
+  const Kp=Kp_BASE*(1+Kp_SCALE*Math.min(absAvg2s/200,1));
+  const deadZone=absAvg2s>50?0:DEAD_ZONE_MS;
+  const rateInterval=absAvg2s>50?500:2000;
+  pllStateEl.textContent='locked Kp='+Kp.toFixed(3);
 
   if((nowMs-pll.lastRateUpdateMs)>=rateInterval){
     pll.lastRateUpdateMs=nowMs;
