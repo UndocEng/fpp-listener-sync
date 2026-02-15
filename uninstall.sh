@@ -6,7 +6,7 @@
 #
 # Reverses everything install.sh did:
 #   1. Stops and removes systemd services (ws-sync, listener-ap, wlan1-setup)
-#   2. Removes iptables rules (forwarding block, device isolation)
+#   2. Removes nftables firewall rules (wlan1 isolation)
 #   3. Restores original FPP configs from backups (dnsmasq, Apache, USB network)
 #   4. Removes web files, symlinks, and the captive portal .htaccess
 #   5. Brings down wlan1 and offers to reboot

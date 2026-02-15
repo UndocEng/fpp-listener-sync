@@ -18,15 +18,16 @@
 #   8. Enables Apache modules (rewrite, proxy, proxy_wstunnel)
 #   9. Deploys the WebSocket sync server as a systemd service (ws-sync)
 #  10. Configures wlan1 as a static IP (192.168.50.1) for the show network
-#  11. Configures dnsmasq for DHCP + wildcard DNS on wlan1
+#  11. Configures dnsmasq for DHCP + wildcard DNS on wlan1 (no gateway for isolation)
 #  12. Starts hostapd as a systemd service (listener-ap, SSID: SHOW_AUDIO)
-#  13. Sets up iptables rules for device isolation (no inter-client traffic)
+#  13. Sets up nftables firewall for wlan1 isolation (blocks FPP/SSH access)
 #  14. Runs self-tests to verify everything is working
 #
 # Network architecture:
 #   wlan1 (USB WiFi) -> hostapd creates "SHOW_AUDIO" open AP
 #   192.168.50.1/24   -> Pi's IP on this network
-#   dnsmasq            -> DHCP (.10-.250) + wildcard DNS (all -> 192.168.50.1)
+#   dnsmasq            -> DHCP (.10-.250, no gateway) + wildcard DNS (all -> 192.168.50.1)
+#   nftables           -> Firewall restricts wlan1 to DHCP/DNS/HTTP/WS only
 #   Apache             -> captive portal redirect + serves /listen/ page
 #   ws-sync            -> WebSocket server on port 8080 (proxied via /ws)
 #
@@ -425,14 +426,14 @@ sudo systemctl start listener-ap
 
 ok "listener-ap running (SSID: SHOW_AUDIO)"
 
-# --- Step 13: Network security (IP forwarding + device isolation) ---
+# --- Step 13: Network security (IP forwarding + nftables firewall) ---
 # Three layers of security:
 #   1. Disable IP forwarding: prevents the Pi from routing wlan1 traffic to
 #      the internet (wlan0/eth0). Phones on SHOW_AUDIO get NO internet.
-#   2. FORWARD chain DROP: iptables belt-and-suspenders for #1
-#   3. Device isolation: phones can talk to the Pi (192.168.50.1) but NOT
-#      to each other. Prevents network scanning/attacks between audience phones.
-#      hostapd's ap_isolate=1 does this at L2; iptables does it at L3.
+#   2. No default gateway (dhcp-option=3): phones can't route to other subnets
+#   3. nftables firewall: only allows DHCP/DNS/HTTP/WS to 192.168.50.1 on wlan1.
+#      Blocks access to FPP web UI, SSH, and other Pi IPs.
+#      Combined with hostapd's ap_isolate=1 (L2 isolation between clients).
 info "Disabling IP forwarding..."
 
 sudo sysctl -w net.ipv4.ip_forward=0 >/dev/null

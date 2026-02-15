@@ -9,7 +9,7 @@ $paths = [
     '../VERSION'
 ];
 
-$version = '1.2.0'; // Fallback version
+$version = '2.3.5'; // Fallback version
 
 foreach ($paths as $path) {
     if (file_exists($path)) {
