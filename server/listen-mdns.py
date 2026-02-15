@@ -47,8 +47,15 @@ def main():
     # AddAddress(interface, protocol, flags, name, address)
     #   interface: OS interface index (wlan1 only)
     #   protocol:  0 = IPv4
-    #   flags:     0 = none
-    group.AddAddress(ifindex, 0, 0, HOSTNAME, ADDRESS)
+    #   flags:     4 = AVAHI_PUBLISH_NO_PROBE (skip probing, we own this network)
+    AVAHI_PUBLISH_NO_PROBE = dbus.UInt32(4)
+    group.AddAddress(
+        dbus.Int32(ifindex),
+        dbus.Int32(0),
+        AVAHI_PUBLISH_NO_PROBE,
+        HOSTNAME,
+        ADDRESS
+    )
     group.Commit()
 
     print(f"Publishing {HOSTNAME} -> {ADDRESS} on {IFACE} (ifindex={ifindex})")
