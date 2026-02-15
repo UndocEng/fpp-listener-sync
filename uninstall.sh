@@ -6,7 +6,7 @@
 #
 # Reverses everything install.sh did:
 #   1. Stops and removes systemd services (ws-sync, listener-ap, wlan1-setup)
-#   2. Removes iptables rules (forwarding block, device isolation)
+#   2. Removes nftables firewall rules (wlan1 isolation)
 #   3. Restores original FPP configs from backups (dnsmasq, Apache, USB network)
 #   4. Removes web files, symlinks, and the captive portal .htaccess
 #   5. Brings down wlan1 and offers to reboot
@@ -52,15 +52,12 @@ sudo rm -f /usr/local/bin/wlan1-setup.sh
 sudo systemctl stop dnsmasq 2>/dev/null || true
 sudo rm -rf /etc/systemd/system/dnsmasq.service.d
 
-# --- Remove iptables rules added by install.sh ---
-info "Removing iptables rules..."
+# --- Remove nftables firewall rules ---
+info "Removing nftables firewall rules..."
 
-if command -v iptables >/dev/null 2>&1; then
-  sudo iptables -D FORWARD -i wlan1 -j DROP 2>/dev/null || true
-  sudo iptables -D FORWARD -o wlan1 -j DROP 2>/dev/null || true
-  sudo iptables -D INPUT -i wlan1 -m iprange --src-range 192.168.50.10-192.168.50.250 -d 192.168.50.1 -j ACCEPT 2>/dev/null || true
-  sudo iptables -D INPUT -i wlan1 -s 192.168.50.0/24 -j DROP 2>/dev/null || true
-  ok "iptables rules removed"
+if [ -x /usr/sbin/nft ]; then
+  sudo /usr/sbin/nft delete table inet listener_filter 2>/dev/null || true
+  ok "nftables rules removed"
 fi
 
 # --- Remove network configs added by install.sh ---

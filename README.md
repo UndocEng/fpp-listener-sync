@@ -136,7 +136,7 @@ Instead of pausing and re-seeking when audio drifts (which causes audible glitch
    - **Dead zone (5ms)**: No corrections when avg2s is within 5ms — avoids jitter from measurement noise
    - **Rate learning**: The base rate is slowly updated via EMA to track long-term drift
 
-The PLL typically converges to within **10-25ms** of FPP within 12-15 seconds, and stays there for the duration of the song. The playback speed adjustments are tiny (less than 1%) and completely inaudible.
+The PLL typically converges to within **10-25ms** of FPP within 10-17 seconds, and stays there for the duration of the song. The playback speed adjustments are tiny (less than 1%) and completely inaudible.
 
 A **hard seek** is only performed if error exceeds 2 seconds (e.g., after a long network dropout), followed by re-calibration.
 
@@ -145,6 +145,38 @@ A **hard seek** is only performed if error exceeds 2 seconds (e.g., after a long
 - **WebSocket** (primary): 100ms updates from the Pi, NTP-style clock offset estimation
 - **HTTP polling** (fallback): Automatic fallback if WebSocket is unavailable
 - Clock offset between the phone and Pi is estimated using NTP-style ping/pong measurements over WebSocket
+
+## Measured Performance (v2.3.5)
+
+Real-world sync log data from a Samsung S21 on the SHOW_AUDIO network, measured across 5 track sessions (~11 minutes total, 564 steady-state samples):
+
+### Convergence
+
+| Scenario | Typical Convergence Time |
+|----------|--------------------------|
+| Initial seek (join mid-song) | 10-17 seconds |
+| Track-to-track transition | Under 1 second |
+| Mid-stream rejoin (no seek) | Up to 36 seconds |
+
+Initial MP3 seek error is typically 250-310ms (MP3 keyframe granularity). The PLL smoothly corrects this without audible glitches.
+
+### Steady-State Accuracy
+
+| Metric | Value |
+|--------|-------|
+| Mean sync error | 14.5ms |
+| Median sync error | 12ms |
+| 95th percentile error | 36ms |
+| Max observed error | 50ms |
+| Mean avg2s (PLL input) | 9.2ms |
+| Signed bias | -0.2ms (essentially zero) |
+
+### What This Means
+- **14.5ms average error** — well below the ~40ms threshold of human audio perception
+- **95% of the time within 36ms** — consistently imperceptible sync offset
+- **Zero systematic drift** — the PLL tracks the master symmetrically
+- **Playback rate stays within 0.7% of normal** (0.9977–1.0049) — completely inaudible
+- **Clock offset stable within 4ms** — consistent network latency estimation
 
 ## Updating to a New Version
 
@@ -249,6 +281,31 @@ sudo journalctl -u ws-sync -f
 
 This shows the Python WebSocket server's output in real-time. Press `Ctrl+C` to stop watching.
 
+## Network Security
+
+The SHOW_AUDIO network is fully isolated from FPP's admin interface and your home network. Three layers of protection:
+
+### 1. No Default Gateway
+Phones on SHOW_AUDIO receive no default gateway via DHCP (`dhcp-option=3`). They can only reach the 192.168.50.0/24 subnet — no routing to your home network or the internet.
+
+### 2. nftables Firewall
+A strict firewall on wlan1 only allows the services phones actually need:
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 67-68 | UDP | DHCP (get an IP address) |
+| 53 | UDP/TCP | DNS (wildcard → 192.168.50.1) |
+| 80 | TCP | HTTP (Apache — listener page + captive portal) |
+| 8080 | TCP | WebSocket (sync server, proxied via /ws) |
+
+Everything else on wlan1 is **dropped** — no SSH, no FPP API, no access to the Pi's other IP addresses.
+
+### 3. Device Isolation
+`hostapd` runs with `ap_isolate=1`, which prevents phones from seeing or communicating with each other at the WiFi layer. Audience members can only talk to the Pi, not to each other's devices.
+
+### Why This Matters
+The Pi has multiple IP addresses (e.g., `10.x.x.x` on wlan0 and `192.168.50.1` on wlan1). Linux's "weak host model" normally accepts traffic for any IP on any interface. Without the firewall, a phone on SHOW_AUDIO could access FPP's admin UI at the Pi's other IP. The nftables rules prevent this.
+
 ## File Locations on the Pi
 
 | What | Path |
@@ -261,6 +318,7 @@ This shows the Python WebSocket server's output in real-time. Press `Ctrl+C` to 
 | Sync log file | `/home/fpp/listen-sync/sync.log` |
 | hostapd config | `/home/fpp/listen-sync/hostapd-listener.conf` |
 | dnsmasq config | `/etc/dnsmasq.conf` |
+| nftables firewall | Applied at runtime by `install.sh` (not persisted to file) |
 | Apache captive portal | `/opt/fpp/www/.htaccess` |
 | Wi-Fi AP service | `/etc/systemd/system/listener-ap.service` |
 | WebSocket service | `/etc/systemd/system/ws-sync.service` |
@@ -346,6 +404,7 @@ sudo ./uninstall.sh
 | **Audio not syncing** | Enable Debug checkbox — is the WebSocket connected? Check Transport field shows `ws`. |
 | **Captive portal not appearing** | Try manually going to `192.168.50.1/listen/` in your browser |
 | **WebSocket not connecting** | Run: `sudo systemctl status ws-sync` and check it's running |
+| **Can access FPP admin from SHOW_AUDIO** | Firewall not applied. Re-run `sudo ./install.sh` — check for `nftables: wlan1 firewall active` in self-test |
 | **Version not updating after deploy** | Hard-refresh the page (pull down to refresh on phone, Ctrl+Shift+R on PC) |
 
 ### Checking Service Status
@@ -356,6 +415,9 @@ sudo systemctl status listener-ap    # Wi-Fi access point
 sudo systemctl status dnsmasq        # DHCP server
 sudo systemctl status ws-sync        # WebSocket sync server
 sudo systemctl status apache2        # Web server
+
+# Check nftables firewall is active
+sudo /usr/sbin/nft list table inet listener_filter
 ```
 
 ### Restarting Everything
@@ -368,6 +430,61 @@ sudo ./install.sh
 ```
 
 The installer is safe to run multiple times — it will restart everything and re-run the self-test.
+
+## Changelog
+
+### v2.3.5
+- Updated all version references, README documentation, LICENSE formatting
+- Added network security section to README
+- Cleaned up stale file references
+
+### v2.3.4
+- **Security fix**: Added nftables firewall to isolate wlan1 (replaces iptables which was not installed on Bookworm)
+- Added `dhcp-option=3` (no gateway) to prevent phones from routing to other subnets
+- Phones on SHOW_AUDIO can no longer access FPP admin UI, SSH, or other Pi IPs
+
+### v2.3.3
+- Removed listen-mdns service (Avahi mDNS broke Android DNS fallback for listen.local)
+- listen.local now works correctly via dnsmasq wildcard DNS
+
+### v2.3.2
+- Added listen-mdns service for mDNS (reverted in v2.3.3 — caused issues)
+
+### v2.3.1
+- Added verbose comments to all code files
+
+### v2.3.0
+- README and documentation overhaul
+- Log management documented
+
+### v2.2.18
+- Tightened baseRate calibration clamp from ±5% to ±1%
+
+### v2.2.17
+- Tightened PLL convergence: dead zone 20→5ms, rate interval 2s→1s in steady state
+
+### v2.2.16
+- Switched PLL error input from instantaneous error to 2-second rolling average (avg2s)
+
+### v2.2.14–v2.2.15
+- Adaptive Kp gain (scales with error magnitude)
+- Removed snap-seek at PLL lock (caused overshoot from MP3 keyframe inaccuracy)
+
+### v2.2.0–v2.2.13
+- Replaced 5-second hard-seek check with continuous PLL rate correction
+- Iterative PLL tuning across many test sessions
+
+### v2.1.0–v2.1.5
+- Scheduled-start sync with play-ahead latency compensation
+- Three debug checkboxes (Debug, Client Log, Server Log) — all off by default
+- Switched to `milliseconds_elapsed` from FPP API for real ms precision
+
+### v2.0.0
+- Log-only mode with CSV export for analysis
+
+### v1.7.x–v1.8.x
+- WebSocket sync with calibrate-then-apply rate adjustment
+- Server-side sync logging
 
 ## License
 

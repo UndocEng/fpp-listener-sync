@@ -18,15 +18,16 @@
 #   8. Enables Apache modules (rewrite, proxy, proxy_wstunnel)
 #   9. Deploys the WebSocket sync server as a systemd service (ws-sync)
 #  10. Configures wlan1 as a static IP (192.168.50.1) for the show network
-#  11. Configures dnsmasq for DHCP + wildcard DNS on wlan1
+#  11. Configures dnsmasq for DHCP + wildcard DNS on wlan1 (no gateway for isolation)
 #  12. Starts hostapd as a systemd service (listener-ap, SSID: SHOW_AUDIO)
-#  13. Sets up iptables rules for device isolation (no inter-client traffic)
+#  13. Sets up nftables firewall for wlan1 isolation (blocks FPP/SSH access)
 #  14. Runs self-tests to verify everything is working
 #
 # Network architecture:
 #   wlan1 (USB WiFi) -> hostapd creates "SHOW_AUDIO" open AP
 #   192.168.50.1/24   -> Pi's IP on this network
-#   dnsmasq            -> DHCP (.10-.250) + wildcard DNS (all -> 192.168.50.1)
+#   dnsmasq            -> DHCP (.10-.250, no gateway) + wildcard DNS (all -> 192.168.50.1)
+#   nftables           -> Firewall restricts wlan1 to DHCP/DNS/HTTP/WS only
 #   Apache             -> captive portal redirect + serves /listen/ page
 #   ws-sync            -> WebSocket server on port 8080 (proxied via /ws)
 #
@@ -425,32 +426,53 @@ sudo systemctl start listener-ap
 
 ok "listener-ap running (SSID: SHOW_AUDIO)"
 
-# --- Step 13: Network security (IP forwarding + device isolation) ---
+# --- Step 13: Network security (IP forwarding + nftables firewall) ---
 # Three layers of security:
 #   1. Disable IP forwarding: prevents the Pi from routing wlan1 traffic to
 #      the internet (wlan0/eth0). Phones on SHOW_AUDIO get NO internet.
-#   2. FORWARD chain DROP: iptables belt-and-suspenders for #1
-#   3. Device isolation: phones can talk to the Pi (192.168.50.1) but NOT
-#      to each other. Prevents network scanning/attacks between audience phones.
-#      hostapd's ap_isolate=1 does this at L2; iptables does it at L3.
+#   2. No default gateway (dhcp-option=3): phones can't route to other subnets
+#   3. nftables firewall: only allows DHCP/DNS/HTTP/WS to 192.168.50.1 on wlan1.
+#      Blocks access to FPP web UI, SSH, and other Pi IPs.
+#      Combined with hostapd's ap_isolate=1 (L2 isolation between clients).
 info "Disabling IP forwarding..."
 
 sudo sysctl -w net.ipv4.ip_forward=0 >/dev/null
 
 echo "net.ipv4.ip_forward=0" | sudo tee /etc/sysctl.d/99-no-forward.conf >/dev/null
 
-if command -v iptables >/dev/null 2>&1; then
-  # Block all forwarding through wlan1 (no internet for show network)
-  sudo iptables -C FORWARD -i wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -i wlan1 -j DROP
-  sudo iptables -C FORWARD -o wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -o wlan1 -j DROP
+# --- nftables firewall: restrict wlan1 to listener services only ---
+# This is CRITICAL for security. Without these rules, phones on SHOW_AUDIO
+# could reach the FPP web UI (10.1.66.204) or other Pi services.
+# The Pi has both IPs (wlan0=10.x, wlan1=192.168.50.1), and Linux's "weak
+# host model" accepts traffic for ANY IP on ANY interface by default.
+#
+# Rules: only allow DHCP, DNS, HTTP (80), and WebSocket (8080) to 192.168.50.1.
+# Everything else on wlan1 is dropped — no access to FPP, SSH, or other subnets.
+NFT="/usr/sbin/nft"
+if [ -x "$NFT" ]; then
+  # Clear any existing listener rules (idempotent re-runs)
+  sudo $NFT delete table inet listener_filter 2>/dev/null || true
 
-  # Device isolation: allow clients to reach the Pi (192.168.50.1) for web/WS,
-  # but DROP all other traffic from the 192.168.50.0/24 subnet (client-to-client)
-  sudo iptables -C INPUT -i wlan1 -m iprange --src-range 192.168.50.10-192.168.50.250 -d 192.168.50.1 -j ACCEPT 2>/dev/null || \
-    sudo iptables -I INPUT -i wlan1 -m iprange --src-range 192.168.50.10-192.168.50.250 -d 192.168.50.1 -j ACCEPT
+  sudo $NFT add table inet listener_filter
+  sudo $NFT add chain inet listener_filter wlan1_input '{ type filter hook input priority 0; policy accept; }'
 
-  sudo iptables -C INPUT -i wlan1 -s 192.168.50.0/24 -j DROP 2>/dev/null || \
-    sudo iptables -A INPUT -i wlan1 -s 192.168.50.0/24 -j DROP
+  # Allow DHCP (UDP 67-68) — needed for phones to get an IP address
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 udp dport '{67, 68}' accept
+
+  # Allow DNS to 192.168.50.1 only
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 ip daddr 192.168.50.1 udp dport 53 accept
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 ip daddr 192.168.50.1 tcp dport 53 accept
+
+  # Allow HTTP (Apache) and WebSocket (ws-sync) to 192.168.50.1 only
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 ip daddr 192.168.50.1 tcp dport '{80, 8080}' accept
+
+  # DROP everything else on wlan1 — blocks access to FPP, SSH, other IPs
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 drop
+
+  ok "nftables firewall active (wlan1 locked to listener services)"
+else
+  printf '%b\n' "${RED}[WARN] nftables not found — wlan1 traffic not firewalled!${NC}"
+  echo "  Install with: sudo apt install nftables"
 fi
 
 ok "IP forwarding disabled, devices isolated"
@@ -496,6 +518,11 @@ IP=$(ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}')
 
 # Check ws-sync service is running
 systemctl is-active --quiet ws-sync && ok "ws-sync: running" || { printf '%b\n' "${RED}[FAIL] ws-sync${NC}"; ERRORS=$((ERRORS+1)); }
+
+# Check nftables firewall is active
+if [ -x /usr/sbin/nft ]; then
+  /usr/sbin/nft list table inet listener_filter >/dev/null 2>&1 && ok "nftables: wlan1 firewall active" || { printf '%b\n' "${RED}[FAIL] nftables firewall${NC}"; ERRORS=$((ERRORS+1)); }
+fi
 
 # Check ws-sync is actually responding on port 8080.
 # A WebSocket server returns HTTP 426 (Upgrade Required) to plain HTTP requests —
