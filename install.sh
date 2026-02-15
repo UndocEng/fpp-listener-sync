@@ -486,7 +486,7 @@ echo "  SSID:     SHOW_AUDIO (open)"
 
 echo "  Page:     http://192.168.50.1/listen/"
 
-echo "  DNS:      http://listen.local/listen/"
+echo "  Browser:  http://listen.show/listen/"
 
 echo ""
 
