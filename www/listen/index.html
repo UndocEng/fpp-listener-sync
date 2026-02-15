@@ -250,9 +250,10 @@ function log(msg){
 }
 
 // --- Server-side reporting (gated by checkbox) ---
-const REPORT_INTERVAL_MS=2000;
+const REPORT_INTERVAL_MS=1000;
 let lastReportMs=0;
 let lastRawPosMs=0, lastTargetMs=0, lastLocalMs=0;
+let lastAvg2s=0;
 const serverLogCheck=document.getElementById('serverLogCheck');
 function sendReport(event,errMs,rate){
   if(!serverLogCheck.checked)return;
@@ -271,6 +272,7 @@ function sendReport(event,errMs,rate){
     rate:Number((rate||1.0).toFixed(4)),
     eff:Number((lastEffRate||0).toFixed(3)),
     offset:Math.round(clockOffset),
+    avg2s:Math.round(lastAvg2s),
     track:currentBase||''
   }));
 }
@@ -686,6 +688,7 @@ async function syncInner(msg){
   errHistory2s.push({t:nowMs,err:errMs});
   while(errHistory2s.length>0&&(nowMs-errHistory2s[0].t)>2000)errHistory2s.shift();
   const avg2s=errHistory2s.length>0?(errHistory2s.reduce((a,b)=>a+b.err,0)/errHistory2s.length):0;
+  lastAvg2s=avg2s;
   avgErr2sEl.textContent=Math.round(avg2s);
 
   let bufferedSec=0;

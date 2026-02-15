@@ -72,8 +72,9 @@ def write_sync_log(client_ip, data):
         rate = data.get("rate", 1.0)
         eff = data.get("eff", 0)
         offset = data.get("offset", 0)
+        avg2s = data.get("avg2s", 0)
         track = data.get("track", "")
-        line = f"{ts} [{client_ip}] {event:12s} fpp={fpp:>7d} target={target:>7d} local={local:>7d} err={err:>5d}ms rate={rate:.4f} eff={eff:.3f} offset={offset:>4d}ms\n"
+        line = f"{ts} [{client_ip}] {event:12s} fpp={fpp:>7d} target={target:>7d} local={local:>7d} err={err:>5d}ms avg2s={avg2s:>5d}ms rate={rate:.4f} eff={eff:.3f} offset={offset:>4d}ms\n"
 
         with open(SYNC_LOG_PATH, "a") as f:
             f.write(line)
