@@ -1,11 +1,25 @@
+# =============================================================================
+# listener-ap.service — WiFi Access Point (hostapd) Systemd Service
+# =============================================================================
+# Runs hostapd to create the "SHOW_AUDIO" WiFi network on wlan1.
+# This is a separate service from the system's default hostapd to avoid
+# conflicts with any existing WiFi AP configuration.
+#
+# Deployed to: /etc/systemd/system/listener-ap.service
+# Config file: /home/fpp/listen-sync/hostapd-listener.conf
+# =============================================================================
+
 [Unit]
 Description=Listener Wi-Fi Access Point
+# Start after networking is up and wlan1 has an IP address
 After=network.target systemd-networkd.service
 Wants=systemd-networkd.service
 
 [Service]
 Type=simple
+# Run hostapd with our custom config (SHOW_AUDIO on wlan1)
 ExecStart=/usr/sbin/hostapd /home/fpp/listen-sync/hostapd-listener.conf
+# Auto-restart if hostapd crashes (e.g., USB WiFi adapter briefly disconnects)
 Restart=always
 RestartSec=3
 

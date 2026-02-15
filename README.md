@@ -109,16 +109,13 @@ If the names don't match, visitors won't hear any audio for that sequence.
 
 ## How the Sync Works
 
-### Scheduled Start (How Audio Gets In Sync)
+### Initial Start (How Audio Begins)
 
 When a track starts playing or a phone joins mid-song:
 
-1. The browser **seeks 2 seconds ahead** of where FPP currently is, while the audio is **paused**
-2. The browser reads where the audio actually landed (MP3 files can only seek to keyframe boundaries, so it might not be exactly where we asked)
-3. It then **waits** for FPP to catch up to that exact position
-4. At the precise moment FPP arrives, it presses **play**
-
-This means the audio starts at exactly the right spot — no keyframe guessing.
+1. The browser **seeks to FPP's current position** and presses **play** immediately
+2. **Play-ahead latency compensation** fires `play()` slightly early to account for the device's audio startup delay (see below)
+3. After a 3-second **settle period**, the PLL takes over to correct any remaining error smoothly
 
 ### Play-Ahead Latency Compensation
 
@@ -128,15 +125,26 @@ The system **measures this delay** the first time it plays on each device, store
 
 The measured play latency is shown in the debug panel and saved to the device's browser storage so it persists across sessions.
 
-### 5-Second Check
+### PLL (Phase-Locked Loop) — Continuous Sync
 
-Every 5 seconds, the system checks the most recent sync error (sampled only at FPP's 1-second tick boundaries to avoid measurement artifacts). If the error exceeds the threshold (default 300ms, user-selectable), it does a corrective scheduled start — pause, seek ahead, wait, play.
+Instead of pausing and re-seeking when audio drifts (which causes audible glitches), the system uses a **PLL** to make tiny, inaudible adjustments to the playback speed:
 
-### What Stays Constant
+1. **Calibration** (~1 second after settle): Collects position samples and computes the device's natural `baseRate` via least-squares regression
+2. **Locked**: Continuously adjusts `playbackRate` based on the **2-second rolling average error** (`avg2s`)
+   - **Adaptive gain**: Corrections are aggressive when error is large, gentle when error is small
+   - **Log-compressed**: Large errors get proportionally smaller corrections to avoid overshooting
+   - **Dead zone (5ms)**: No corrections when avg2s is within 5ms — avoids jitter from measurement noise
+   - **Rate learning**: The base rate is slowly updated via EMA to track long-term drift
 
-- Playback rate is always 1.0 — no speed adjustments. Testing proved that phones at `rate=1.0` barely drift at all over 100+ seconds.
-- Clock offset between the phone and Pi is estimated using NTP-style ping/pong measurements over WebSocket.
-- If WebSocket is unavailable, the system falls back to HTTP polling (`status.php`) automatically.
+The PLL typically converges to within **10-25ms** of FPP within 12-15 seconds, and stays there for the duration of the song. The playback speed adjustments are tiny (less than 1%) and completely inaudible.
+
+A **hard seek** is only performed if error exceeds 2 seconds (e.g., after a long network dropout), followed by re-calibration.
+
+### Transport
+
+- **WebSocket** (primary): 100ms updates from the Pi, NTP-style clock offset estimation
+- **HTTP polling** (fallback): Automatic fallback if WebSocket is unavailable
+- Clock offset between the phone and Pi is estimated using NTP-style ping/pong measurements over WebSocket
 
 ## Updating to a New Version
 
@@ -178,12 +186,13 @@ All three are **off by default** so they don't affect performance during normal 
 | Transport | `ws` (WebSocket) or `http` (polling fallback) |
 | RTT | Round-trip time to the Pi in milliseconds |
 | Clock Offset | Estimated clock difference between phone and Pi |
-| Error | Current sync error in ms (positive = phone is behind FPP) |
-| Avg Error (5s) | Average of tick-boundary errors in the current 5s window |
-| Avg Error (all) | Running average of all tick-boundary errors |
-| Effective Rate | Measured playback rate (should be ~1.000) |
+| Error | Current instantaneous sync error in ms (positive = phone is behind FPP) |
+| Avg 2s | Rolling 2-second average error — the main PLL input |
+| Rate | Current `playbackRate` (near 1.000, adjusted by PLL) |
+| Avg Error (all) | Running average of all errors since playback started |
+| Effective Rate | Measured actual playback rate |
 | Play Latency | Measured `play()` startup delay for this device |
-| Threshold | Correction threshold — dropdown to choose 200ms, 300ms, or 500ms |
+| PLL State | Current PLL phase: `idle`, `calibrating`, or `locked Kp=X.XXX` |
 
 ### Server Log on the Pi
 
@@ -195,17 +204,40 @@ cat /home/fpp/listen-sync/sync.log
 
 The log format is:
 ```
-timestamp [client_ip] EVENT fpp=X target=Y local=Z err=Nms rate=R eff=E offset=Oms
+timestamp [client_ip] EVENT fpp=X target=Y local=Z err=Nms avg2s=Nms rate=R eff=E offset=Oms
 ```
 
+| Field | Meaning |
+|-------|---------|
+| `fpp` | FPP's reported position (ms) |
+| `target` | Extrapolated target position (ms) |
+| `local` | Phone's actual audio position (ms) |
+| `err` | Instantaneous error (ms) |
+| `avg2s` | 2-second rolling average error (ms) — the PLL's main input |
+| `rate` | Current `playbackRate` set by PLL |
+| `eff` | Measured effective playback rate |
+| `offset` | Estimated clock offset (ms) |
+
 Events you'll see:
-- `INITIAL_SEEK` — Client is setting up a scheduled start
+- `INITIAL_SEEK` — Client seeking to FPP position
 - `START` — Audio playback started
-- `SYNC` — Periodic sync report (sampled at FPP tick boundaries)
-- `CORRECTION` — Error exceeded threshold, re-syncing
+- `SYNC` — Periodic sync report (every ~1 second)
+- `CORRECTION` — Hard seek correction (only for errors > 2 seconds)
 - `STOP` — Track stopped
 
-The log file is located at `/home/fpp/listen-sync/sync.log` and auto-clears when a new track starts. Maximum size is 5MB.
+### Log Management
+
+The sync log **will not fill up your Pi's memory card**:
+
+- **Auto-clear on new track**: Each time a new song starts, the log is cleared and starts fresh
+- **5MB size limit**: If the log somehow reaches 5MB, it's rotated (old log renamed to `.log.old`)
+- **Log location**: `/home/fpp/listen-sync/sync.log`
+- **Only when enabled**: Logs are only written when at least one client has the "Server Log" checkbox checked
+
+To clear the log manually:
+```bash
+rm /home/fpp/listen-sync/sync.log
+```
 
 ### WebSocket Server Log
 

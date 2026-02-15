@@ -1,7 +1,20 @@
+# =============================================================================
+# 20-listener-ap.network — systemd-networkd configuration for wlan1
+# =============================================================================
+# Tells systemd-networkd about wlan1's static IP. Primarily informational —
+# FPP's web UI reads these files to show network status.
+#
+# Actual IP assignment is done by wlan1-setup.service via `ip addr add`,
+# because FPP's network management can conflict with systemd-networkd.
+#
+# Deployed to: /etc/systemd/network/20-listener-ap.network
+# =============================================================================
+
 [Match]
 Name=wlan1
 
 [Network]
 Description=FPP Listener AP (SHOW_AUDIO WiFi) - Do Not Modify
 Address=192.168.50.1/24
+# Allow IP assignment even when no WiFi clients are connected
 ConfigureWithoutCarrier=yes

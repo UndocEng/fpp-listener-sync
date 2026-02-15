@@ -1,5 +1,18 @@
 
 #!/bin/bash
+# =============================================================================
+# uninstall.sh — FPP Listener Sync Uninstaller
+# =============================================================================
+#
+# Reverses everything install.sh did:
+#   1. Stops and removes systemd services (ws-sync, listener-ap, wlan1-setup)
+#   2. Removes iptables rules (forwarding block, device isolation)
+#   3. Restores original FPP configs from backups (dnsmasq, Apache, USB network)
+#   4. Removes web files, symlinks, and the captive portal .htaccess
+#   5. Brings down wlan1 and offers to reboot
+#
+# Run with: sudo ./uninstall.sh
+# =============================================================================
 
 set -e
 
@@ -20,6 +33,7 @@ read REPLY
 
 [ "$REPLY" != "y" ] && [ "$REPLY" != "Y" ] && echo "Cancelled." && exit 0
 
+# --- Stop and remove all listener-sync systemd services ---
 info "Stopping services..."
 
 sudo systemctl stop ws-sync 2>/dev/null || true
@@ -38,6 +52,7 @@ sudo rm -f /usr/local/bin/wlan1-setup.sh
 sudo systemctl stop dnsmasq 2>/dev/null || true
 sudo rm -rf /etc/systemd/system/dnsmasq.service.d
 
+# --- Remove iptables rules added by install.sh ---
 info "Removing iptables rules..."
 
 if command -v iptables >/dev/null 2>&1; then
@@ -48,18 +63,21 @@ if command -v iptables >/dev/null 2>&1; then
   ok "iptables rules removed"
 fi
 
+# --- Remove network configs added by install.sh ---
 info "Removing configs..."
 
 sudo rm -f /etc/systemd/network/20-listener-ap.network
 sudo rm -f /etc/sysctl.d/99-no-forward.conf
 
+# --- Restore original FPP configs from backups ---
+# install.sh renamed these to .disabled; restore them so FPP's USB tethering works again
 info "Restoring FPP configs..."
 
 [ -f /etc/dnsmasq.d/usb.conf.disabled ] && sudo mv /etc/dnsmasq.d/usb.conf.disabled /etc/dnsmasq.d/usb.conf && ok "Restored usb.conf"
 
 [ -f /etc/systemd/network/usb1.network.disabled ] && sudo mv /etc/systemd/network/usb1.network.disabled /etc/systemd/network/usb1.network && ok "Restored usb1.network"
 
-# Restore dnsmasq.conf from backup
+# Restore dnsmasq.conf from the backup made during install
 if [ -f /etc/dnsmasq.conf.listener-backup ]; then
   sudo mv /etc/dnsmasq.conf.listener-backup /etc/dnsmasq.conf
   ok "Restored original dnsmasq.conf"
@@ -69,9 +87,10 @@ fi
 
 sudo systemctl restart dnsmasq 2>/dev/null || true
 
+# --- Restore Apache config ---
+# install.sh changed AllowOverride None to AllowOverride All and added listener.conf.
+# Restore from backup and remove our additions.
 info "Restoring Apache config..."
-
-# Restore Apache AllowOverride setting from backup
 if [ -f /etc/apache2/sites-enabled/000-default.conf.listener-backup ]; then
   sudo mv /etc/apache2/sites-enabled/000-default.conf.listener-backup /etc/apache2/sites-enabled/000-default.conf
   ok "Restored Apache config"
@@ -84,17 +103,18 @@ sudo rm -f /etc/apache2/conf-available/listener.conf
 sudo rm -f /etc/apache2/conf-enabled/listener.conf
 sudo a2disconf listener 2>/dev/null || true
 
+# --- Remove all web files, symlinks, and runtime data ---
 info "Removing web files..."
 
-sudo rm -rf /opt/fpp/www/listen
-sudo rm -f /opt/fpp/www/music
-sudo rm -f /opt/fpp/www/.htaccess
-sudo rm -f /opt/fpp/www/qrcode.html
-sudo rm -f /opt/fpp/www/print-sign.html
-sudo rm -f /opt/fpp/www/qrcode.min.js
+sudo rm -rf /opt/fpp/www/listen       # symlink to listen web files
+sudo rm -f /opt/fpp/www/music          # symlink to FPP music directory
+sudo rm -f /opt/fpp/www/.htaccess      # captive portal redirect rules
+sudo rm -f /opt/fpp/www/qrcode.html    # QR code generator page
+sudo rm -f /opt/fpp/www/print-sign.html # printable sign
+sudo rm -f /opt/fpp/www/qrcode.min.js  # QR code JS library
 
-sudo rm -rf /home/fpp/media/www/listen
-sudo rm -rf /home/fpp/listen-sync
+sudo rm -rf /home/fpp/media/www/listen  # actual web files
+sudo rm -rf /home/fpp/listen-sync       # runtime dir (server, hostapd config, sync.log)
 
 info "Restarting Apache..."
 

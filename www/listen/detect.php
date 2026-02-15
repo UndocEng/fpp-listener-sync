@@ -1,6 +1,22 @@
 <?php
-// Captive portal detection handler
-// Different devices check different URLs to detect captive portals
+/**
+ * detect.php — Captive Portal Detection Handler (legacy/backup)
+ * ==============================================================
+ *
+ * NOTE: The primary captive portal redirect is handled by .htaccess rewrite
+ * rules, which are faster (no PHP execution). This file exists as a backup
+ * for edge cases where .htaccess rules might not catch a detection URL.
+ *
+ * When a phone connects to a WiFi network, it checks specific URLs to
+ * determine if a captive portal is present. Each OS uses different URLs:
+ *   - Android/Chrome: /generate_204 (expects HTTP 204 = internet works)
+ *   - Apple iOS/macOS: /hotspot-detect.html, /success.html
+ *   - Windows: /connecttest.txt
+ *   - Firefox/Ubuntu: /canonical.html
+ *
+ * By returning a 302 redirect instead of the expected response, we tell
+ * the phone "there's a captive portal here" which triggers the portal popup.
+ */
 
 $uri = $_SERVER['REQUEST_URI'] ?? '';
 

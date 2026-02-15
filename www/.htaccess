@@ -1,47 +1,97 @@
-# Captive portal redirect - DENY ALL except /listen/ and /music/
+# =============================================================================
+# .htaccess — Captive Portal + Security Whitelist
+# =============================================================================
+#
+# Deployed to: /opt/fpp/www/.htaccess (FPP's Apache document root)
+# Requires:    AllowOverride All in Apache config (set by install.sh)
+#              mod_rewrite enabled (set by install.sh)
+#
+# PURPOSE:
+#   When a phone connects to the SHOW_AUDIO WiFi, it tries to detect if it
+#   has internet access by loading specific URLs (e.g., Google's generate_204,
+#   Apple's hotspot-detect.html). Because our wildcard DNS resolves ALL domains
+#   to the Pi, these requests hit Apache. This .htaccess intercepts them and
+#   redirects to /listen/, which triggers the phone's captive portal popup.
+#
+# SECURITY MODEL (whitelist approach):
+#   Only three paths are allowed from the show network:
+#     /listen/  — the listener sync page + PHP endpoints
+#     /music/   — audio files (MP3, M4A, etc.)
+#     /ws       — WebSocket proxy to sync server
+#   Everything else is redirected to /listen/.
+#   This prevents show network users from accessing FPP's admin UI, API, etc.
+#
+#   Admin access (FPP web UI) is preserved for localhost, fpp.local, and
+#   private IPs on other subnets (10.x, 172.16-31.x, 192.168.x except .50.x).
+#
+# RULE ORDER (processed top to bottom, first match wins):
+#   1. Captive portal detection URLs → redirect to /listen/
+#   2. /listen/, /music/, /ws from show network → allow (pass through)
+#   3. Everything else from show network → redirect to /listen/
+#   4. Admin IPs (localhost, fpp.local, LAN) → allow all (FPP web UI works)
+#   5. Wildcard domains (google.com, etc.) → redirect to /listen/
+#
+# =============================================================================
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    # CAPTIVE PORTAL DETECTION - Handle device detection URLs FIRST (any domain)
-    # Android/Chrome checks generate_204, Apple checks hotspot-detect.html, etc.
-    # Redirect to IP address directly (not listen.local) to avoid extra DNS lookup
+    # --- Rule 1: Captive portal detection URLs ---
+    # Phones and OSes check specific URLs to detect captive portals.
+    # We intercept these and redirect to /listen/ to trigger the portal popup.
+    # Redirect uses IP (not listen.local) to avoid an extra DNS lookup cycle.
+    #
+    # Matched URLs/hosts:
+    #   Android/Chrome: generate_204, gen_204, connectivitycheck.gstatic.com
+    #   Apple iOS/macOS: hotspot-detect.html, success.html, captive.apple.com
+    #   Windows: connecttest.txt, www.msftconnecttest.com
+    #   Firefox/Ubuntu: canonical.html
     RewriteCond %{REQUEST_URI} ^/(generate_204|gen_204|hotspot-detect\.html|success\.html|success\.txt|connecttest\.txt|canonical\.html|ncsi\.txt|redirect)$ [NC,OR]
     RewriteCond %{HTTP_HOST} ^(captive\.apple\.com|connectivitycheck\.gstatic\.com|clients[0-9]\.google\.com|www\.msftconnecttest\.com|msftncsi\.com)$ [NC]
     RewriteRule ^ http://192.168.50.1/listen/ [R=302,L]
 
-    # SECURITY: Whitelist approach - only allow /listen/, /music/, and /ws from public network
-    # Check if accessing from public network (192.168.50.x or listen.local)
+    # --- Rules 2a-c: Whitelist allowed paths on the show network ---
+    # These rules use [L] (Last) to stop processing — the request passes through
+    # to the actual file/directory without any redirect.
+
+    # 2a. Allow /listen/ (the main page, status.php, version.php, etc.)
     RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
     RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
-    # Allow /listen/ directory and files
     RewriteCond %{REQUEST_URI} ^/listen(/|$) [NC]
     RewriteRule ^ - [L]
 
+    # 2b. Allow /music/ (audio files served from FPP's music directory)
     RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
     RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
-    # Allow /music/ directory and files
     RewriteCond %{REQUEST_URI} ^/music(/|$) [NC]
     RewriteRule ^ - [L]
 
-    # Allow /ws for WebSocket proxy (Apache mod_proxy_wstunnel handles this)
+    # 2c. Allow /ws (WebSocket proxy — Apache routes this to ws-sync on port 8080)
     RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
     RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
     RewriteCond %{REQUEST_URI} ^/ws$ [NC]
     RewriteRule ^ - [L]
 
-    # Block EVERYTHING else from listen.local and 192.168.50.1
+    # --- Rule 3: Block everything else from the show network ---
+    # Any path not in the whitelist above (e.g., /api/, /settings/, /admin/)
+    # gets redirected to /listen/. This protects FPP's admin interface.
     RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
     RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
     RewriteRule ^ /listen/ [R=302,L]
 
-    # Allow full access from localhost, fpp.local, and private IPs (for admin/self-test)
+    # --- Rule 4: Allow full access from admin/LAN networks ---
+    # localhost, 127.0.0.1, fpp.local, *.local domains, and private IP ranges
+    # (10.x.x.x, 172.16-31.x.x, 192.168.x.x EXCEPT 192.168.50.x) get full
+    # access to FPP's web UI. The negative lookahead (?!50\.) excludes the
+    # show network subnet.
     RewriteCond %{HTTP_HOST} ^(localhost|127\.0\.0\.1|fpp\.local|.*\.local)(:[0-9]+)?$ [NC,OR]
     RewriteCond %{HTTP_HOST} ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.(?!50\.))[0-9.]+$ [NC]
     RewriteRule ^ - [L]
 
-    # CATCH-ALL: Any other domain (google.com, facebook.com, etc.) redirect to listen page
-    # This catches all DNS wildcard traffic from public AP
-    # Redirect to IP address directly to avoid DNS lookup delay
+    # --- Rule 5: Catch-all for wildcard DNS domains ---
+    # Any request arriving with a Host header that isn't the Pi's IP or
+    # listen.local is from the DNS wildcard (e.g., phone tried to load
+    # google.com but DNS resolved it to the Pi). Redirect to /listen/.
     RewriteCond %{HTTP_HOST} !^192\.168\.50\.1(:[0-9]+)?$ [NC]
     RewriteCond %{HTTP_HOST} !^listen\.local(:[0-9]+)?$ [NC]
     RewriteRule ^ http://192.168.50.1/listen/ [R=302,L]
