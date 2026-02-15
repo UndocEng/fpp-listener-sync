@@ -620,7 +620,7 @@ async function syncInner(msg){
   if(needInitialSeek&&haveMetadata){
     needInitialSeek=false;
     audio.currentTime=clamp(targetSec,0,Math.max(0,audio.duration-0.1));
-    log('PLAY NOW: seek to '+Math.round(targetSec*1000)+'ms, will snap-correct after 3s settle');
+    log('PLAY NOW: seek to '+Math.round(targetSec*1000)+'ms, PLL will converge after settle');
     sendReport('INITIAL_SEEK',errMs,1.0);
     settleUntil=nowMs+1500;
     effRateWallMs=nowMs;
@@ -741,14 +741,7 @@ async function syncInner(msg){
       pll.baseRate=linearSlope(pll.samples);
       if(pll.baseRate<0.95||pll.baseRate>1.05)pll.baseRate=1.0;
       pll.phase='locked';
-      // Snap-seek to correct position if off by >50ms
-      const lockErr=targetSec-localSec;
-      if(Math.abs(lockErr)>0.05){
-        audio.currentTime=clamp(targetSec,0,Math.max(0,audio.duration-0.1));
-        lastSeekMs=nowMs;
-        log('PLL: lock snap err='+Math.round(lockErr*1000)+'ms');
-        sendReport('CORRECTION',lockErr*1000,pll.baseRate);
-      }
+      // No snap-seek: let adaptive PLL converge smoothly from initial error
       pll.anchorLocalMs=localMs;
       pll.anchorFppMs=fppMs;
       audio.playbackRate=pll.baseRate;
