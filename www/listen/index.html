@@ -211,7 +211,8 @@ try{
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 
 function pllReset(){
-  pll.phase='idle';pll.samples=[];pll.baseRate=1.0;pll.anchorLocalMs=0;pll.anchorFppMs=0;
+  pll.phase='idle';pll.samples=[];pll.baseRate=1.0;pll.anchorLocalMs=0;pll.anchorFppMs=0;pll.lastRateUpdateMs=0;
+  if(audio)audio.playbackRate=1.0;
 }
 
 // Least-squares slope: ms of FPP time per ms of local time
