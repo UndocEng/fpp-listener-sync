@@ -773,19 +773,17 @@ async function syncInner(msg){
     return;
   }
 
-  // Adaptive PLL: gain scales with avg2s magnitude
+  // Adaptive PLL: use avg2s as error input (smooth, prevents overshoot)
   const absAvg2s=Math.abs(lastAvg2s);
   const Kp=Kp_BASE*(1+Kp_SCALE*Math.min(absAvg2s/200,1));
-  const deadZone=absAvg2s>50?0:DEAD_ZONE_MS;
   const rateInterval=absAvg2s>50?500:2000;
   pllStateEl.textContent='locked Kp='+Kp.toFixed(3);
 
   if((nowMs-pll.lastRateUpdateMs)>=rateInterval){
     pll.lastRateUpdateMs=nowMs;
-    const absErrMs=Math.abs(phaseErr)*1000;
     let rate=pll.baseRate;
-    if(absErrMs>deadZone){
-      rate=pll.baseRate+Math.sign(phaseErr)*Kp*Math.log1p((absErrMs-deadZone)/LOG_SCALE_MS);
+    if(absAvg2s>DEAD_ZONE_MS){
+      rate=pll.baseRate+Math.sign(lastAvg2s)*Kp*Math.log1p((absAvg2s-DEAD_ZONE_MS)/LOG_SCALE_MS);
     }
     rate=clamp(rate,1-MAX_ADJ,1+MAX_ADJ);
     if(Math.abs(rate-audio.playbackRate)>MIN_RATE_CHANGE){
