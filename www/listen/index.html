@@ -175,16 +175,17 @@ let errHistoryAll=[];
 
 // --- PLL constants ---
 const CAL_MIN_MS=1500;   // minimum calibration window (ms) for regression
-const Kp=0.03;           // log-proportional gain
+const Kp=0.01;           // log-proportional gain (very gentle)
 const MAX_ADJ=0.05;      // max ±5% rate deviation
 const DEAD_ZONE_MS=20;   // no correction below this — prevents oscillation
 const LOG_SCALE_MS=100;  // log compression denominator (higher = gentler)
 const HARD_SEEK_S=2.0;   // hard seek threshold (seconds)
 const RATE_EMA=0.05;     // EMA alpha for learning base rate
-const MIN_RATE_CHANGE=0.001; // only update playbackRate if change > 0.1%
+const MIN_RATE_CHANGE=0.005; // only update playbackRate if change > 0.5%
+const RATE_UPDATE_MS=2000;   // only re-evaluate rate every 2 seconds
 
 // --- PLL state ---
-const pll={phase:'idle',samples:[],baseRate:1.0,anchorLocalMs:0,anchorFppMs:0};
+const pll={phase:'idle',samples:[],baseRate:1.0,anchorLocalMs:0,anchorFppMs:0,lastRateUpdateMs:0};
 
 // --- Effective rate measurement ---
 let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
@@ -791,15 +792,18 @@ async function syncInner(msg){
     return;
   }
 
-  // Log-compressed proportional correction with dead zone
-  const absErrMs=Math.abs(phaseErr)*1000;
-  let rate=pll.baseRate;
-  if(absErrMs>DEAD_ZONE_MS){
-    rate=pll.baseRate+Math.sign(phaseErr)*Kp*Math.log1p((absErrMs-DEAD_ZONE_MS)/LOG_SCALE_MS);
-  }
-  rate=clamp(rate,1-MAX_ADJ,1+MAX_ADJ);
-  if(Math.abs(rate-audio.playbackRate)>MIN_RATE_CHANGE){
-    audio.playbackRate=rate;
+  // Log-compressed proportional correction — only re-evaluate every 2s
+  if((nowMs-pll.lastRateUpdateMs)>=RATE_UPDATE_MS){
+    pll.lastRateUpdateMs=nowMs;
+    const absErrMs=Math.abs(phaseErr)*1000;
+    let rate=pll.baseRate;
+    if(absErrMs>DEAD_ZONE_MS){
+      rate=pll.baseRate+Math.sign(phaseErr)*Kp*Math.log1p((absErrMs-DEAD_ZONE_MS)/LOG_SCALE_MS);
+    }
+    rate=clamp(rate,1-MAX_ADJ,1+MAX_ADJ);
+    if(Math.abs(rate-audio.playbackRate)>MIN_RATE_CHANGE){
+      audio.playbackRate=rate;
+    }
   }
   pllRateEl.textContent=audio.playbackRate.toFixed(3);
 
