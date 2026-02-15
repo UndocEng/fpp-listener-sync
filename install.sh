@@ -466,6 +466,13 @@ if [ -x "$NFT" ]; then
   # Allow HTTP (Apache) and WebSocket (ws-sync) to 192.168.50.1 only
   sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 ip daddr 192.168.50.1 tcp dport '{80, 8080}' accept
 
+  # REJECT HTTPS (port 443) with TCP RST instead of silently dropping.
+  # Modern phones check HTTPS for captive portal detection. Silent DROP causes
+  # a 30s TCP timeout, so the phone gives up and shows "no internet" instead of
+  # falling back to HTTP. REJECT sends an immediate RST, the phone quickly
+  # falls back to HTTP, gets the 302 redirect, and triggers the captive portal popup.
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 tcp dport 443 reject
+
   # DROP everything else on wlan1 — blocks access to FPP, SSH, other IPs
   sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 drop
 
