@@ -749,9 +749,17 @@ async function syncInner(msg){
     if(calSpanMs>=CAL_MIN_MS&&pll.samples.length>=6){
       pll.baseRate=linearSlope(pll.samples);
       if(pll.baseRate<0.95||pll.baseRate>1.05)pll.baseRate=1.0;
+      pll.phase='locked';
+      // Snap-seek to correct position if off by >50ms
+      const lockErr=targetSec-localSec;
+      if(Math.abs(lockErr)>0.05){
+        audio.currentTime=clamp(targetSec,0,Math.max(0,audio.duration-0.1));
+        lastSeekMs=nowMs;
+        log('PLL: lock snap err='+Math.round(lockErr*1000)+'ms');
+        sendReport('CORRECTION',lockErr*1000,pll.baseRate);
+      }
       pll.anchorLocalMs=localMs;
       pll.anchorFppMs=fppMs;
-      pll.phase='locked';
       audio.playbackRate=pll.baseRate;
       pllStateEl.textContent='locked';
       log('PLL: locked baseRate='+pll.baseRate.toFixed(4)+' err='+Math.round(errMs)+'ms from '+pll.samples.length+' samples over '+Math.round(calSpanMs)+'ms');
