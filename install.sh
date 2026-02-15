@@ -1,17 +1,49 @@
 
 #!/bin/bash
+# =============================================================================
+# install.sh — FPP Listener Sync Installer
+# =============================================================================
+#
+# Deploys the complete FPP Listener Sync system onto a Raspberry Pi running
+# Falcon Player (FPP). Run with: sudo ./install.sh
+#
+# What this script does (in order):
+#   1. Checks prerequisites (Apache, PHP, Python3, FPP directories)
+#   2. Installs Python websockets package (needed by ws-sync-server.py)
+#   3. Installs hostapd + dnsmasq (for the isolated WiFi access point)
+#   4. Disables conflicting FPP USB network configs
+#   5. Deploys web files (index.html, status.php, etc.) to Apache's docroot
+#   6. Creates Apache symlinks (/listen/ -> web files, /music/ -> FPP music dir)
+#   7. Installs captive portal .htaccess (redirects all HTTP to /listen/)
+#   8. Enables Apache modules (rewrite, proxy, proxy_wstunnel)
+#   9. Deploys the WebSocket sync server as a systemd service (ws-sync)
+#  10. Configures wlan1 as a static IP (192.168.50.1) for the show network
+#  11. Configures dnsmasq for DHCP + wildcard DNS on wlan1
+#  12. Starts hostapd as a systemd service (listener-ap, SSID: SHOW_AUDIO)
+#  13. Sets up iptables rules for device isolation (no inter-client traffic)
+#  14. Runs self-tests to verify everything is working
+#
+# Network architecture:
+#   wlan1 (USB WiFi) -> hostapd creates "SHOW_AUDIO" open AP
+#   192.168.50.1/24   -> Pi's IP on this network
+#   dnsmasq            -> DHCP (.10-.250) + wildcard DNS (all -> 192.168.50.1)
+#   Apache             -> captive portal redirect + serves /listen/ page
+#   ws-sync            -> WebSocket server on port 8080 (proxied via /ws)
+#
+# The script only touches wlan1 — wlan0, eth0, and FPP's web UI are unaffected.
+# =============================================================================
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-LISTEN_WEB="/home/fpp/media/www/listen"
+LISTEN_WEB="/home/fpp/media/www/listen"   # Web files served by Apache
 
-LISTEN_SYNC="/home/fpp/listen-sync"
+LISTEN_SYNC="/home/fpp/listen-sync"        # Runtime configs + sync server
 
-APACHE_ROOT="/opt/fpp/www"
+APACHE_ROOT="/opt/fpp/www"                 # FPP's Apache document root
 
-MUSIC_DIR="/home/fpp/media/music"
+MUSIC_DIR="/home/fpp/media/music"          # FPP's music file directory
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 
@@ -27,6 +59,8 @@ echo ""
 info "FPP Listener Sync - v${VERSION}"
 echo ""
 
+# --- Step 1: Prerequisites ---
+# Verify this is actually an FPP system with the expected directory structure
 info "Checking prerequisites..."
 
 [ -d "$APACHE_ROOT" ] || fail "Apache docroot $APACHE_ROOT not found. Is this an FPP system?"
@@ -39,6 +73,12 @@ python3 --version >/dev/null 2>&1 || fail "Python3 is not installed."
 
 ok "Prerequisites OK"
 
+# --- Step 2: Python websockets ---
+# The WebSocket sync server (ws-sync-server.py) requires the 'websockets' package.
+# Prefer apt (python3-websockets) because it's the system package on Raspbian.
+# Fall back to pip if apt version isn't available.
+# Note: The apt version is websockets 10.4, which uses the older handler signature
+# (websocket, path) rather than the newer (websocket) style.
 info "Checking Python websockets package..."
 
 if ! python3 -c "import websockets" 2>/dev/null; then
@@ -51,6 +91,9 @@ fi
 
 ok "Python websockets package available"
 
+# --- Step 3: hostapd + dnsmasq ---
+# hostapd: creates the WiFi access point (SHOW_AUDIO network)
+# dnsmasq: provides DHCP (assigns IPs to phones) and DNS (wildcard -> Pi)
 info "Checking hostapd and dnsmasq..."
 
 NEED_INSTALL=""
@@ -69,12 +112,26 @@ fi
 
 ok "hostapd and dnsmasq installed"
 
+# --- Step 4: Disable conflicting FPP configs ---
+# FPP may have its own USB network configs (for USB tethering). These conflict
+# with our use of wlan1. We disable them by renaming to .disabled (reversible
+# by uninstall.sh).
 info "Disabling conflicting FPP configs..."
 
 [ -f /etc/dnsmasq.d/usb.conf ] && sudo mv /etc/dnsmasq.d/usb.conf /etc/dnsmasq.d/usb.conf.disabled && ok "Disabled usb.conf"
 
 [ -f /etc/systemd/network/usb1.network ] && sudo mv /etc/systemd/network/usb1.network /etc/systemd/network/usb1.network.disabled && ok "Disabled usb1.network"
 
+# --- Step 5: Deploy web files ---
+# Copy the client-side files to Apache's serving directory.
+# These include:
+#   index.html       — the main listener page (sync algorithm + UI)
+#   status.php       — HTTP fallback endpoint (polls FPP API)
+#   version.php      — returns the version number from VERSION file
+#   detect.php       — captive portal detection handler
+#   logo.png         — branding image
+#   qrcode.html      — QR code generator page (for printing signs)
+#   print-sign.html  — printable sign with QR code + instructions
 info "Deploying web files..."
 
 sudo mkdir -p "$LISTEN_WEB"
@@ -109,12 +166,22 @@ sudo chmod a+r "$APACHE_ROOT/qrcode.min.js"
 
 ok "Web files deployed to $LISTEN_WEB"
 
+# --- Step 6: Apache symlinks ---
+# /opt/fpp/www/listen -> /home/fpp/media/www/listen (our web files)
+# /opt/fpp/www/music  -> /home/fpp/media/music (FPP's music files)
+# This lets the client access audio files at /music/SongName.mp3
 info "Creating Apache symlinks..."
 
 sudo rm -rf "$APACHE_ROOT/listen"
 
 sudo ln -s "$LISTEN_WEB" "$APACHE_ROOT/listen"
 
+# --- Step 7: Captive portal .htaccess ---
+# This is the magic that makes phones automatically open the listen page.
+# When a phone connects to SHOW_AUDIO, it tries to check for internet
+# (e.g., generate_204, hotspot-detect.html). The .htaccess redirects ALL
+# HTTP requests to /listen/ except whitelisted paths (/listen/, /music/, /ws).
+# This triggers the phone's captive portal popup showing our page.
 info "Deploying captive portal redirect..."
 
 sudo cp "$SCRIPT_DIR/www/.htaccess" "$APACHE_ROOT/.htaccess"
@@ -123,6 +190,11 @@ sudo chmod a+r "$APACHE_ROOT/.htaccess"
 
 ok "Captive portal redirect configured"
 
+# --- Step 8: Apache modules + config ---
+# mod_rewrite: needed for .htaccess rewrite rules (captive portal)
+# mod_proxy + mod_proxy_wstunnel: proxies /ws on port 80 to ws-sync on port 8080
+# This lets WebSocket connections go through Apache without needing a separate port
+# (phones can only access port 80 through the captive portal).
 info "Enabling Apache mod_rewrite and AllowOverride..."
 
 sudo a2enmod rewrite 2>/dev/null || ok "mod_rewrite already enabled"
@@ -131,20 +203,22 @@ sudo a2enmod proxy 2>/dev/null || ok "mod_proxy already enabled"
 
 sudo a2enmod proxy_wstunnel 2>/dev/null || ok "mod_proxy_wstunnel already enabled"
 
+# Install our Apache config (WebSocket proxy + directory permissions)
 sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/apache2/conf-available/listener.conf 2>/dev/null || sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/httpd/conf.d/listener.conf 2>/dev/null || true
 
 sudo a2enconf listener 2>/dev/null || true
 
-# CRITICAL: Enable .htaccess support by setting AllowOverride All
+# CRITICAL: FPP's default Apache config sets AllowOverride None, which makes
+# Apache completely ignore .htaccess files. We need AllowOverride All for the
+# captive portal redirect to work. Without this, phones won't see the portal.
 info "Configuring Apache to allow .htaccess (required for security)..."
 
 APACHE_CONF="/etc/apache2/sites-enabled/000-default.conf"
 
 if [ -f "$APACHE_CONF" ]; then
-  # Backup original config
   sudo cp "$APACHE_CONF" "$APACHE_CONF.listener-backup" 2>/dev/null || true
 
-  # Change AllowOverride None to AllowOverride All in /opt/fpp/www/ directory
+  # Only modifies the /opt/fpp/www/ Directory block — other directories unaffected
   sudo sed -i '/<Directory \/opt\/fpp\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' "$APACHE_CONF"
 
   ok "Apache AllowOverride enabled"
@@ -156,6 +230,8 @@ sudo systemctl restart apache2 2>/dev/null || sudo systemctl restart httpd 2>/de
 
 ok "Apache configured for captive portal"
 
+# Create /music symlink so clients can access audio files at /music/SongName.mp3
+# Only create/update if needed (don't break existing correct symlink)
 if [ ! -L "$APACHE_ROOT/music" ] && [ ! -d "$APACHE_ROOT/music" ]; then
 
   sudo ln -s "$MUSIC_DIR" "$APACHE_ROOT/music"
@@ -178,6 +254,11 @@ sudo chmod -R a+rX "$MUSIC_DIR"
 
 ok "Apache symlinks created"
 
+# --- Step 9: Deploy runtime configs + WebSocket sync server ---
+# The listener-sync directory (/home/fpp/listen-sync/) holds:
+#   - hostapd-listener.conf: WiFi AP configuration
+#   - ws-sync-server.py: the WebSocket sync beacon server
+#   - sync.log: client sync reports (created at runtime)
 info "Deploying listener-sync configs..."
 
 sudo mkdir -p "$LISTEN_SYNC"
@@ -190,6 +271,9 @@ sudo chown -R fpp:fpp "$LISTEN_SYNC"
 
 ok "Listener-sync configs deployed"
 
+# Install ws-sync as a systemd service so it starts on boot and auto-restarts.
+# The service runs as user 'fpp' with resource limits (64MB RAM, 25% CPU)
+# to protect the Pi 3B from runaway processes.
 info "Installing WebSocket sync beacon service..."
 
 sudo cp "$SCRIPT_DIR/config/ws-sync.service" /etc/systemd/system/ws-sync.service
@@ -202,9 +286,13 @@ sudo systemctl restart ws-sync
 
 ok "ws-sync service installed and started"
 
+# --- Step 10: Configure wlan1 static IP ---
+# The USB WiFi adapter (wlan1) hosts the SHOW_AUDIO network.
+# We assign it 192.168.50.1/24 — this is the Pi's address on the show network.
+# All client phones will be in the 192.168.50.10-250 range (via dnsmasq DHCP).
 info "Configuring wlan1 static IP..."
 
-# Check if wlan1 exists
+# First verify wlan1 actually exists (USB WiFi adapter must be plugged in)
 if ! ip link show wlan1 >/dev/null 2>&1; then
   echo ""
   printf '%b\n' "${RED}[ERROR] wlan1 interface not found!${NC}"
@@ -277,6 +365,13 @@ sudo systemctl enable wlan1-setup.service
 
 ok "wlan1 configured as 192.168.50.1"
 
+# --- Step 11: Configure dnsmasq (DHCP + DNS) ---
+# dnsmasq provides two critical services on wlan1:
+#   1. DHCP: assigns IP addresses (192.168.50.10-250) to phones that connect
+#   2. DNS: wildcard record (address=/#/192.168.50.1) resolves ALL domain
+#      lookups to the Pi. This is essential for the captive portal — when a
+#      phone tries to load google.com, it hits the Pi instead, which redirects
+#      to /listen/. Also makes "listen.local" work without mDNS.
 info "Configuring dnsmasq..."
 
 # Backup original dnsmasq.conf if it exists and hasn't been backed up
@@ -310,6 +405,10 @@ else
   warn "dnsmasq may not be running - check 'systemctl status dnsmasq'"
 fi
 
+# --- Step 12: Start hostapd (WiFi access point) ---
+# Uses our custom listener-ap.service instead of the default hostapd service.
+# This runs hostapd with our config file (SSID: SHOW_AUDIO, channel 6, open).
+# We disable the default hostapd service to avoid conflicts.
 info "Configuring listener AP service..."
 
 sudo systemctl stop hostapd 2>/dev/null || true
@@ -326,6 +425,14 @@ sudo systemctl start listener-ap
 
 ok "listener-ap running (SSID: SHOW_AUDIO)"
 
+# --- Step 13: Network security (IP forwarding + device isolation) ---
+# Three layers of security:
+#   1. Disable IP forwarding: prevents the Pi from routing wlan1 traffic to
+#      the internet (wlan0/eth0). Phones on SHOW_AUDIO get NO internet.
+#   2. FORWARD chain DROP: iptables belt-and-suspenders for #1
+#   3. Device isolation: phones can talk to the Pi (192.168.50.1) but NOT
+#      to each other. Prevents network scanning/attacks between audience phones.
+#      hostapd's ap_isolate=1 does this at L2; iptables does it at L3.
 info "Disabling IP forwarding..."
 
 sudo sysctl -w net.ipv4.ip_forward=0 >/dev/null
@@ -333,12 +440,12 @@ sudo sysctl -w net.ipv4.ip_forward=0 >/dev/null
 echo "net.ipv4.ip_forward=0" | sudo tee /etc/sysctl.d/99-no-forward.conf >/dev/null
 
 if command -v iptables >/dev/null 2>&1; then
-  # Prevent forwarding from/to wlan1 (blocks internet access)
+  # Block all forwarding through wlan1 (no internet for show network)
   sudo iptables -C FORWARD -i wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -i wlan1 -j DROP
   sudo iptables -C FORWARD -o wlan1 -j DROP 2>/dev/null || sudo iptables -A FORWARD -o wlan1 -j DROP
 
-  # Device isolation - prevent visitors from accessing each other
-  # Block traffic between clients (192.168.50.10-250) but allow traffic to server (192.168.50.1)
+  # Device isolation: allow clients to reach the Pi (192.168.50.1) for web/WS,
+  # but DROP all other traffic from the 192.168.50.0/24 subnet (client-to-client)
   sudo iptables -C INPUT -i wlan1 -m iprange --src-range 192.168.50.10-192.168.50.250 -d 192.168.50.1 -j ACCEPT 2>/dev/null || \
     sudo iptables -I INPUT -i wlan1 -m iprange --src-range 192.168.50.10-192.168.50.250 -d 192.168.50.1 -j ACCEPT
 
@@ -370,25 +477,34 @@ echo "  Print:    http://192.168.50.1/print-sign.html"
 
 echo "========================================="
 
+# --- Step 14: Self-Test ---
+# Verify that all services are running and endpoints are reachable.
+# This catches common issues like dnsmasq port conflicts, Apache misconfigs, etc.
 info "Running self-test..."
 
 ERRORS=0
 
+# Check that systemd services are active
 systemctl is-active --quiet listener-ap && ok "listener-ap: running" || { printf '%b\n' "${RED}[FAIL] listener-ap${NC}"; ERRORS=$((ERRORS+1)); }
 
 systemctl is-active --quiet dnsmasq && ok "dnsmasq: running" || { printf '%b\n' "${RED}[FAIL] dnsmasq${NC}"; ERRORS=$((ERRORS+1)); }
 
+# Check wlan1 has the correct IP
 IP=$(ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}')
 
 [ "$IP" = "192.168.50.1/24" ] && ok "wlan1: 192.168.50.1/24" || { printf '%b\n' "${RED}[FAIL] wlan1 IP: $IP${NC}"; ERRORS=$((ERRORS+1)); }
 
+# Check ws-sync service is running
 systemctl is-active --quiet ws-sync && ok "ws-sync: running" || { printf '%b\n' "${RED}[FAIL] ws-sync${NC}"; ERRORS=$((ERRORS+1)); }
 
-# WebSocket server responds with HTTP 426 (Upgrade Required) to plain HTTP - this confirms it's running
+# Check ws-sync is actually responding on port 8080.
+# A WebSocket server returns HTTP 426 (Upgrade Required) to plain HTTP requests —
+# this is the expected "success" response confirming the server is alive.
 WS_HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ 2>/dev/null)
 
 [ "$WS_HTTP" = "426" ] && ok "ws-sync port 8080: responding" || { printf '%b\n' "${RED}[FAIL] ws-sync port 8080: HTTP $WS_HTTP${NC}"; ERRORS=$((ERRORS+1)); }
 
+# Check that Apache is serving the listen page and status endpoint
 HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/ 2>/dev/null)
 
 [ "$HTTP" = "200" ] && ok "/listen/: HTTP 200" || { printf '%b\n' "${RED}[FAIL] /listen/: HTTP $HTTP${NC}"; ERRORS=$((ERRORS+1)); }
