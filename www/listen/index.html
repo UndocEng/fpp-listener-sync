@@ -175,15 +175,14 @@ let errHistoryAll=[];
 
 // --- PLL constants ---
 const CAL_MIN_MS=1500;   // minimum calibration window (ms) for regression
-const Kp=0.2;            // proportional gain (lower than eavesdrop's 0.3 — we update 2.5x faster)
+const Kp=0.1;            // proportional gain (gentle — we update 10x/s)
 const MAX_ADJ=0.05;      // max ±5% rate deviation
 const HARD_SEEK_S=2.0;   // hard seek threshold (seconds)
 const RATE_EMA=0.05;     // EMA alpha for learning base rate
-const ERR_SMOOTH=0.2;    // EMA alpha for phase error smoothing (filters jitter)
+const MIN_RATE_CHANGE=0.001; // only update playbackRate if change > 0.1%
 
 // --- PLL state ---
 const pll={phase:'idle',samples:[],baseRate:1.0,anchorLocalMs:0,anchorFppMs:0};
-let smoothedErr=0;        // EMA-smoothed phase error (seconds)
 
 // --- Effective rate measurement ---
 let effRateWallMs=0, effRateLocalMs=0, lastEffRate=0;
@@ -206,7 +205,6 @@ function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 
 function pllReset(){
   pll.phase='idle';pll.samples=[];pll.baseRate=1.0;pll.anchorLocalMs=0;pll.anchorFppMs=0;
-  smoothedErr=0;
 }
 
 // Least-squares slope: ms of FPP time per ms of local time
@@ -754,29 +752,25 @@ async function syncInner(msg){
       pll.anchorLocalMs=localMs;
       pll.anchorFppMs=fppMs;
       pll.phase='locked';
-      smoothedErr=targetSec-localSec; // seed with current error
       audio.playbackRate=pll.baseRate;
       pllStateEl.textContent='locked';
-      log('PLL: locked baseRate='+pll.baseRate.toFixed(4)+' err='+Math.round(smoothedErr*1000)+'ms from '+pll.samples.length+' samples over '+Math.round(calSpanMs)+'ms');
+      log('PLL: locked baseRate='+pll.baseRate.toFixed(4)+' err='+Math.round(errMs)+'ms from '+pll.samples.length+' samples over '+Math.round(calSpanMs)+'ms');
     }
     sendReport('SYNC',errMs,audio.playbackRate);
     return;
   }
 
   // --- PLL Phase: Locked ---
-  const rawPhaseErr=targetSec-localSec;
-  // Smooth the error to filter jitter — prevents audible rate warble
-  smoothedErr=smoothedErr*(1-ERR_SMOOTH)+rawPhaseErr*ERR_SMOOTH;
+  const phaseErr=targetSec-localSec;
   pllStateEl.textContent='locked';
 
-  // Hard seek if way off (>2s), with cooldown — use RAW error for hard seek detection
-  if(Math.abs(rawPhaseErr)>HARD_SEEK_S&&(nowMs-lastSeekMs)>SEEK_COOLDOWN_MS){
-    log('PLL: HARD SEEK err='+Math.round(rawPhaseErr*1000)+'ms (staying locked)');
-    sendReport('CORRECTION',rawPhaseErr*1000,audio.playbackRate);
+  // Hard seek if way off (>2s), with cooldown
+  if(Math.abs(phaseErr)>HARD_SEEK_S&&(nowMs-lastSeekMs)>SEEK_COOLDOWN_MS){
+    log('PLL: HARD SEEK err='+Math.round(phaseErr*1000)+'ms (staying locked)');
+    sendReport('CORRECTION',phaseErr*1000,audio.playbackRate);
     audio.currentTime=clamp(targetSec,0,Math.max(0,audio.duration-0.1));
     lastSeekMs=nowMs;
     lastCorrectionMs=nowMs;
-    smoothedErr=0; // reset after seek
     pll.anchorLocalMs=localMs;
     pll.anchorFppMs=fppMs;
     errHistoryAll=[];
@@ -787,11 +781,13 @@ async function syncInner(msg){
     return;
   }
 
-  // Proportional rate correction using smoothed error
-  let rate=pll.baseRate+Kp*smoothedErr;
+  // Proportional rate correction — only update playbackRate when change is meaningful
+  let rate=pll.baseRate+Kp*phaseErr;
   rate=clamp(rate,1-MAX_ADJ,1+MAX_ADJ);
-  audio.playbackRate=rate;
-  pllRateEl.textContent=rate.toFixed(3);
+  if(Math.abs(rate-audio.playbackRate)>MIN_RATE_CHANGE){
+    audio.playbackRate=rate;
+  }
+  pllRateEl.textContent=audio.playbackRate.toFixed(3);
 
   // Learn: update baseRate from longer observation window
   const dtLocal=localMs-pll.anchorLocalMs;
@@ -809,7 +805,7 @@ async function syncInner(msg){
   sendReport('SYNC',errMs,rate);
 
   // Periodic logging
-  if(++logThrottle%20===0)log('PLL raw='+Math.round(rawPhaseErr*1000)+'ms smooth='+Math.round(smoothedErr*1000)+'ms rate='+rate.toFixed(3)+'x base='+pll.baseRate.toFixed(4));
+  if(++logThrottle%20===0)log('PLL err='+Math.round(phaseErr*1000)+'ms rate='+audio.playbackRate.toFixed(3)+'x base='+pll.baseRate.toFixed(4));
 }
 
 // Fetch and display version (cache-busting)
