@@ -182,7 +182,7 @@ const CAL_MIN_MS=800;    // minimum calibration window (ms) for regression
 const Kp_BASE=0.01;      // base proportional gain
 const Kp_SCALE=4;        // adaptive multiplier: Kp = Kp_BASE * (1 + Kp_SCALE * |avg2s|/200)
 const MAX_ADJ=0.05;      // max ±5% rate deviation
-const DEAD_ZONE_MS=20;   // dead zone when avg2s is small
+const DEAD_ZONE_MS=5;    // dead zone (small: avg2s is already smooth)
 const LOG_SCALE_MS=100;  // log compression denominator (higher = gentler)
 const HARD_SEEK_S=2.0;   // hard seek threshold (seconds)
 const RATE_EMA=0.05;     // EMA alpha for learning base rate
@@ -776,7 +776,7 @@ async function syncInner(msg){
   // Adaptive PLL: use avg2s as error input (smooth, prevents overshoot)
   const absAvg2s=Math.abs(lastAvg2s);
   const Kp=Kp_BASE*(1+Kp_SCALE*Math.min(absAvg2s/200,1));
-  const rateInterval=absAvg2s>50?500:2000;
+  const rateInterval=absAvg2s>50?500:1000;
   pllStateEl.textContent='locked Kp='+Kp.toFixed(3);
 
   if((nowMs-pll.lastRateUpdateMs)>=rateInterval){
