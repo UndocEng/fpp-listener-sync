@@ -1,0 +1,21 @@
+# =============================================================================
+# listen-mdns.service — Publish "listen.local" via mDNS on wlan1 only
+# =============================================================================
+# Runs listen-mdns.py to advertise listen.local → 192.168.50.1 via Avahi's
+# D-Bus API, restricted to the wlan1 (SHOW_AUDIO) interface.
+#
+# Deployed to: /etc/systemd/system/listen-mdns.service
+# =============================================================================
+
+[Unit]
+Description=Publish listen.local via mDNS on wlan1
+After=avahi-daemon.service wlan1-setup.service
+Requires=avahi-daemon.service
+
+[Service]
+ExecStart=/usr/bin/python3 /home/fpp/listen-sync/listen-mdns.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

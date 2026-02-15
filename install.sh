@@ -267,6 +267,8 @@ sudo cp "$SCRIPT_DIR/config/hostapd-listener.conf" "$LISTEN_SYNC/hostapd-listene
 
 sudo cp "$SCRIPT_DIR/server/ws-sync-server.py" "$LISTEN_SYNC/ws-sync-server.py"
 
+sudo cp "$SCRIPT_DIR/server/listen-mdns.py" "$LISTEN_SYNC/listen-mdns.py"
+
 sudo chown -R fpp:fpp "$LISTEN_SYNC"
 
 ok "Listener-sync configs deployed"
@@ -285,6 +287,23 @@ sudo systemctl enable ws-sync
 sudo systemctl restart ws-sync
 
 ok "ws-sync service installed and started"
+
+# --- Step 9b: Install listen-mdns service ---
+# Publishes "listen.local" as an mDNS record on wlan1 ONLY via Avahi D-Bus API.
+# Without this, phones can't resolve listen.local because .local is handled by
+# mDNS (port 5353), not regular DNS (port 53). This does NOT affect other
+# interfaces (wlan0, eth0) or any other FPP/Avahi services.
+info "Installing listen.local mDNS service..."
+
+sudo cp "$SCRIPT_DIR/config/listen-mdns.service" /etc/systemd/system/listen-mdns.service
+
+sudo systemctl daemon-reload
+
+sudo systemctl enable listen-mdns
+
+sudo systemctl restart listen-mdns
+
+ok "listen-mdns service installed (listen.local on wlan1)"
 
 # --- Step 10: Configure wlan1 static IP ---
 # The USB WiFi adapter (wlan1) hosts the SHOW_AUDIO network.
@@ -496,6 +515,8 @@ IP=$(ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}')
 
 # Check ws-sync service is running
 systemctl is-active --quiet ws-sync && ok "ws-sync: running" || { printf '%b\n' "${RED}[FAIL] ws-sync${NC}"; ERRORS=$((ERRORS+1)); }
+
+systemctl is-active --quiet listen-mdns && ok "listen-mdns: running" || { printf '%b\n' "${RED}[FAIL] listen-mdns${NC}"; ERRORS=$((ERRORS+1)); }
 
 # Check ws-sync is actually responding on port 8080.
 # A WebSocket server returns HTTP 426 (Upgrade Required) to plain HTTP requests —

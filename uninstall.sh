@@ -49,6 +49,10 @@ sudo systemctl disable wlan1-setup.service 2>/dev/null || true
 sudo rm -f /etc/systemd/system/wlan1-setup.service
 sudo rm -f /usr/local/bin/wlan1-setup.sh
 
+sudo systemctl stop listen-mdns 2>/dev/null || true
+sudo systemctl disable listen-mdns 2>/dev/null || true
+sudo rm -f /etc/systemd/system/listen-mdns.service
+
 sudo systemctl stop dnsmasq 2>/dev/null || true
 sudo rm -rf /etc/systemd/system/dnsmasq.service.d
 
