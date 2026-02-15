@@ -49,22 +49,15 @@ sudo systemctl disable wlan1-setup.service 2>/dev/null || true
 sudo rm -f /etc/systemd/system/wlan1-setup.service
 sudo rm -f /usr/local/bin/wlan1-setup.sh
 
-sudo systemctl stop listen-mdns 2>/dev/null || true
-sudo systemctl disable listen-mdns 2>/dev/null || true
-sudo rm -f /etc/systemd/system/listen-mdns.service
-
 sudo systemctl stop dnsmasq 2>/dev/null || true
 sudo rm -rf /etc/systemd/system/dnsmasq.service.d
 
-# --- Remove iptables rules added by install.sh ---
-info "Removing iptables rules..."
+# --- Remove nftables firewall rules ---
+info "Removing nftables firewall rules..."
 
-if command -v iptables >/dev/null 2>&1; then
-  sudo iptables -D FORWARD -i wlan1 -j DROP 2>/dev/null || true
-  sudo iptables -D FORWARD -o wlan1 -j DROP 2>/dev/null || true
-  sudo iptables -D INPUT -i wlan1 -m iprange --src-range 192.168.50.10-192.168.50.250 -d 192.168.50.1 -j ACCEPT 2>/dev/null || true
-  sudo iptables -D INPUT -i wlan1 -s 192.168.50.0/24 -j DROP 2>/dev/null || true
-  ok "iptables rules removed"
+if [ -x /usr/sbin/nft ]; then
+  sudo /usr/sbin/nft delete table inet listener_filter 2>/dev/null || true
+  ok "nftables rules removed"
 fi
 
 # --- Remove network configs added by install.sh ---
