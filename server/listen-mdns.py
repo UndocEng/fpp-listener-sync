@@ -47,12 +47,14 @@ def main():
     # AddAddress(interface, protocol, flags, name, address)
     #   interface: OS interface index (wlan1 only)
     #   protocol:  0 = IPv4
-    #   flags:     4 = AVAHI_PUBLISH_NO_PROBE (skip probing, we own this network)
-    AVAHI_PUBLISH_NO_PROBE = dbus.UInt32(4)
+    #   flags:     NO_REVERSE (32) — don't publish reverse PTR record.
+    #              The Pi already has a PTR for 192.168.50.1 → fpp.local;
+    #              adding a second PTR for the same IP causes a collision.
+    AVAHI_PUBLISH_NO_REVERSE = dbus.UInt32(32)
     group.AddAddress(
         dbus.Int32(ifindex),
         dbus.Int32(0),
-        AVAHI_PUBLISH_NO_PROBE,
+        AVAHI_PUBLISH_NO_REVERSE,
         HOSTNAME,
         ADDRESS
     )
