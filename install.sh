@@ -27,7 +27,7 @@
 #   wlan1 (USB WiFi) -> hostapd creates "SHOW_AUDIO" open AP
 #   192.168.50.1/24   -> Pi's IP on this network
 #   dnsmasq            -> DHCP (.10-.250, no gateway) + wildcard DNS (all -> 192.168.50.1)
-#   nftables           -> Firewall restricts wlan1 to DHCP/DNS/HTTP/WS only
+#   nftables           -> Firewall restricts wlan1 to DHCP/DNS/HTTP/WS only, REJECT 443
 #   Apache             -> captive portal redirect + serves /listen/ page
 #   ws-sync            -> WebSocket server on port 8080 (proxied via /ws)
 #
@@ -147,6 +147,8 @@ sudo cp "$SCRIPT_DIR/www/listen/version-debug.php" "$LISTEN_WEB/version-debug.ph
 
 sudo cp "$SCRIPT_DIR/www/listen/detect.php" "$LISTEN_WEB/detect.php"
 
+sudo cp "$SCRIPT_DIR/www/listen/portal-api.php" "$LISTEN_WEB/portal-api.php"
+
 sudo cp "$SCRIPT_DIR/www/listen/logo.png" "$LISTEN_WEB/logo.png"
 
 sudo cp "$SCRIPT_DIR/VERSION" "$LISTEN_WEB/VERSION"
@@ -226,6 +228,13 @@ if [ -f "$APACHE_CONF" ]; then
 else
   warn "Apache config not found at $APACHE_CONF - you may need to manually set AllowOverride All"
 fi
+
+# Disable any previous SSL VirtualHost (WLED-style: no HTTPS at all).
+# When port 443 has nothing listening, phones get TCP RST and fall back to HTTP
+# where our 302 redirect triggers the captive portal. A self-signed cert on 443
+# creates a TLS error that Android treats as "broken internet" instead of "captive portal."
+sudo a2dissite listener-ssl 2>/dev/null || true
+sudo a2dismod ssl 2>/dev/null || true
 
 sudo systemctl restart apache2 2>/dev/null || sudo systemctl restart httpd 2>/dev/null || true
 
@@ -466,12 +475,13 @@ if [ -x "$NFT" ]; then
   # Allow HTTP (Apache) and WebSocket (ws-sync) to 192.168.50.1 only
   sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 ip daddr 192.168.50.1 tcp dport '{80, 8080}' accept
 
-  # REJECT HTTPS (port 443) with TCP RST instead of silently dropping.
-  # Modern phones check HTTPS for captive portal detection. Silent DROP causes
-  # a 30s TCP timeout, so the phone gives up and shows "no internet" instead of
-  # falling back to HTTP. REJECT sends an immediate RST, the phone quickly
-  # falls back to HTTP, gets the 302 redirect, and triggers the captive portal popup.
-  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 tcp dport 443 reject
+  # REJECT HTTPS (port 443) with TCP RST — do NOT accept or silently drop.
+  # Modern phones probe HTTPS first for connectivity checks. Sending TCP RST
+  # (instant "connection refused") makes the phone fall back to HTTP quickly,
+  # where our 302 redirect triggers the captive portal popup.
+  # Silent DROP = 30s timeout = "no internet". ACCEPT with bad cert = TLS error.
+  # TCP RST mimics WLED's approach (nothing on 443) — triggers captive portal.
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 tcp dport 443 reject with tcp reset
 
   # DROP everything else on wlan1 — blocks access to FPP, SSH, other IPs
   sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 drop
