@@ -20,7 +20,7 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 
 ## Requirements
 
-- Raspberry Pi running FPP v9.x (tested on Pi 3B with FPP v9.3)
+- Raspberry Pi running FPP v9.x (tested on Pi 3B with FPP v9.4)
 - USB Wi-Fi adapter (nl80211-compatible, e.g. rtl8192cu) — this is the second Wi-Fi that creates the `SHOW_AUDIO` network
 - Apache + PHP (already included in standard FPP images)
 - Python 3 with `websockets` package (the installer will install this for you)
@@ -285,8 +285,8 @@ This shows the Python WebSocket server's output in real-time. Press `Ctrl+C` to 
 
 The SHOW_AUDIO network is fully isolated from FPP's admin interface and your home network. Three layers of protection:
 
-### 1. No Default Gateway
-Phones on SHOW_AUDIO receive no default gateway via DHCP (`dhcp-option=3`). They can only reach the 192.168.50.0/24 subnet — no routing to your home network or the internet.
+### 1. No Internet Routing
+IP forwarding is disabled on the Pi (`net.ipv4.ip_forward=0`). Phones on SHOW_AUDIO cannot route to your home network or the internet.
 
 ### 2. nftables Firewall
 A strict firewall on wlan1 only allows the services phones actually need:
@@ -298,13 +298,35 @@ A strict firewall on wlan1 only allows the services phones actually need:
 | 80 | TCP | HTTP (Apache — listener page + captive portal) |
 | 8080 | TCP | WebSocket (sync server, proxied via /ws) |
 
-Everything else on wlan1 is **dropped** — no SSH, no FPP API, no access to the Pi's other IP addresses.
+Everything else on wlan1 is **rejected** — no SSH, no FPP API, no access to the Pi's other IP addresses. REJECT (not DROP) is used so blocked connections fail instantly instead of timing out, which speeds up captive portal detection on phones.
 
 ### 3. Device Isolation
 `hostapd` runs with `ap_isolate=1`, which prevents phones from seeing or communicating with each other at the WiFi layer. Audience members can only talk to the Pi, not to each other's devices.
 
 ### Why This Matters
 The Pi has multiple IP addresses (e.g., `10.x.x.x` on wlan0 and `192.168.50.1` on wlan1). Linux's "weak host model" normally accepts traffic for any IP on any interface. Without the firewall, a phone on SHOW_AUDIO could access FPP's admin UI at the Pi's other IP. The nftables rules prevent this.
+
+## Captive Portal
+
+When a phone joins SHOW_AUDIO, the system triggers the OS captive portal popup ("Sign in to Wi-Fi network") so the listener page opens automatically. Multiple mechanisms work together:
+
+### How It Works
+
+1. **DHCP Option 114 (CAPPORT)** — The DHCP lease includes a Captive Portal API URL (RFC 8910). Modern phones (Android 11+, iOS 14+) fetch this URL and get a JSON response telling them a sign-in page is available.
+
+2. **HTTP Probe Interception** — Phones check specific URLs to test connectivity (e.g., `generate_204` on Android, `hotspot-detect.html` on iOS). Apache's `.htaccess` intercepts these and returns a 302 redirect to `/listen/`, which triggers the captive portal UI.
+
+3. **Wildcard DNS Redirect** — All domain lookups resolve to the Pi via dnsmasq. If a phone opens any website, it hits Apache, which redirects to `/listen/`.
+
+### Captive Portal Behavior
+
+- **First-time visitors**: The captive portal popup appears automatically on most phones. Samsung phones may show a notification that requires a tap.
+- **Returning devices**: Android caches captive portal state per network. Phones that have connected before may skip the popup. This is normal OS behavior.
+- **Fallback**: The printed QR code sign includes instructions to open `192.168.50.1` in the browser if the popup doesn't appear.
+
+### FPP Cache Override
+
+FPP's Apache config sets `ExpiresDefault "access plus 1 year"` for all responses. The installer adds a `mod_headers` override so the CAPPORT API endpoint (`portal-api.php`) always returns `Cache-Control: private, no-store, max-age=0`.
 
 ## File Locations on the Pi
 
@@ -432,6 +454,17 @@ sudo ./install.sh
 The installer is safe to run multiple times — it will restart everything and re-run the self-test.
 
 ## Changelog
+
+### v2.4.0
+- **Captive portal overhaul**: DHCP Option 114 (CAPPORT/RFC 8910), portal-api.php endpoint, FPP cache override
+- **Firewall**: Changed DROP to REJECT for all blocked wlan1 traffic — phones detect captive portal faster (no 30s timeouts on blocked ports like DNS-over-TLS, HTTPS)
+- `.htaccess`: Added `connectivitycheck.android.com`, `msftconnecttest.com` probe hosts
+- `portal-api.php`: RFC 8908 Captive Portal API with `JSON_UNESCAPED_SLASHES`, proper `Cache-Control`
+- `apache-listener.conf`: Added `mod_headers` override to prevent FPP's 1-year cache on portal API
+- Removed SSL VirtualHost (self-signed cert on 443 confused Android captive portal detection)
+- DHCP gateway restored (`dhcp-option=3,192.168.50.1`) — required for phones to run captive portal checks
+- Print sign includes fallback instruction ("go to 192.168.50.1")
+- Tested on FPP v9.4, Samsung S24 Ultra (Android 16), Samsung S21 (Android 15)
 
 ### v2.3.5
 - Updated all version references, README documentation, LICENSE formatting

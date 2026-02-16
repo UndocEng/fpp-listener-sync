@@ -42,12 +42,13 @@
     # Redirect uses IP (not listen.local) to avoid an extra DNS lookup cycle.
     #
     # Matched URLs/hosts:
-    #   Android/Chrome: generate_204, gen_204, connectivitycheck.gstatic.com
+    #   Android/Chrome: generate_204, gen_204, connectivitycheck.gstatic.com,
+    #                   connectivitycheck.android.com
     #   Apple iOS/macOS: hotspot-detect.html, success.html, captive.apple.com
-    #   Windows: connecttest.txt, www.msftconnecttest.com
+    #   Windows: connecttest.txt, msftconnecttest.com, www.msftconnecttest.com
     #   Firefox/Ubuntu: canonical.html
     RewriteCond %{REQUEST_URI} ^/(generate_204|gen_204|hotspot-detect\.html|success\.html|success\.txt|connecttest\.txt|canonical\.html|ncsi\.txt|redirect)$ [NC,OR]
-    RewriteCond %{HTTP_HOST} ^(captive\.apple\.com|connectivitycheck\.gstatic\.com|clients[0-9]\.google\.com|www\.msftconnecttest\.com|msftncsi\.com)$ [NC]
+    RewriteCond %{HTTP_HOST} ^(captive\.apple\.com|connectivitycheck\.gstatic\.com|connectivitycheck\.android\.com|clients[0-9]\.google\.com|www\.msftconnecttest\.com|msftconnecttest\.com|msftncsi\.com)$ [NC]
     RewriteRule ^ http://192.168.50.1/listen/ [R=302,L]
 
     # --- Rules 2a-c: Whitelist allowed paths on the show network ---

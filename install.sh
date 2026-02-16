@@ -27,7 +27,7 @@
 #   wlan1 (USB WiFi) -> hostapd creates "SHOW_AUDIO" open AP
 #   192.168.50.1/24   -> Pi's IP on this network
 #   dnsmasq            -> DHCP (.10-.250, no gateway) + wildcard DNS (all -> 192.168.50.1)
-#   nftables           -> Firewall restricts wlan1 to DHCP/DNS/HTTP/WS only
+#   nftables           -> Firewall restricts wlan1 to DHCP/DNS/HTTP/WS only, REJECT 443
 #   Apache             -> captive portal redirect + serves /listen/ page
 #   ws-sync            -> WebSocket server on port 8080 (proxied via /ws)
 #
@@ -147,6 +147,8 @@ sudo cp "$SCRIPT_DIR/www/listen/version-debug.php" "$LISTEN_WEB/version-debug.ph
 
 sudo cp "$SCRIPT_DIR/www/listen/detect.php" "$LISTEN_WEB/detect.php"
 
+sudo cp "$SCRIPT_DIR/www/listen/portal-api.php" "$LISTEN_WEB/portal-api.php"
+
 sudo cp "$SCRIPT_DIR/www/listen/logo.png" "$LISTEN_WEB/logo.png"
 
 sudo cp "$SCRIPT_DIR/VERSION" "$LISTEN_WEB/VERSION"
@@ -204,6 +206,8 @@ sudo a2enmod proxy 2>/dev/null || ok "mod_proxy already enabled"
 
 sudo a2enmod proxy_wstunnel 2>/dev/null || ok "mod_proxy_wstunnel already enabled"
 
+sudo a2enmod headers 2>/dev/null || ok "mod_headers already enabled"
+
 # Install our Apache config (WebSocket proxy + directory permissions)
 sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/apache2/conf-available/listener.conf 2>/dev/null || sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/httpd/conf.d/listener.conf 2>/dev/null || true
 
@@ -226,6 +230,13 @@ if [ -f "$APACHE_CONF" ]; then
 else
   warn "Apache config not found at $APACHE_CONF - you may need to manually set AllowOverride All"
 fi
+
+# Disable any previous SSL VirtualHost (WLED-style: no HTTPS at all).
+# When port 443 has nothing listening, phones get TCP RST and fall back to HTTP
+# where our 302 redirect triggers the captive portal. A self-signed cert on 443
+# creates a TLS error that Android treats as "broken internet" instead of "captive portal."
+sudo a2dissite listener-ssl 2>/dev/null || true
+sudo a2dismod ssl 2>/dev/null || true
 
 sudo systemctl restart apache2 2>/dev/null || sudo systemctl restart httpd 2>/dev/null || true
 
@@ -466,8 +477,18 @@ if [ -x "$NFT" ]; then
   # Allow HTTP (Apache) and WebSocket (ws-sync) to 192.168.50.1 only
   sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 ip daddr 192.168.50.1 tcp dport '{80, 8080}' accept
 
-  # DROP everything else on wlan1 — blocks access to FPP, SSH, other IPs
-  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 drop
+  # REJECT everything else on wlan1 — blocks access to FPP, SSH, other IPs.
+  # Using REJECT (not DROP) is critical for captive portal speed:
+  #   DROP = silent timeout (30s+) for each blocked port the phone tries
+  #   REJECT = instant failure, phone moves to next check immediately
+  # This matters because phones try many ports during captive portal detection:
+  #   - HTTPS (443) for connectivity checks
+  #   - DNS-over-TLS (853) before falling back to regular DNS
+  #   - QUIC/HTTP3 (UDP 443) for fast DNS resolution
+  # With DROP, each of these times out for 30s = "long wait" before portal popup.
+  # With REJECT, the phone gets instant RST/unreachable and proceeds quickly.
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 meta l4proto tcp reject with tcp reset
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 reject
 
   ok "nftables firewall active (wlan1 locked to listener services)"
 else
