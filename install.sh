@@ -206,6 +206,8 @@ sudo a2enmod proxy 2>/dev/null || ok "mod_proxy already enabled"
 
 sudo a2enmod proxy_wstunnel 2>/dev/null || ok "mod_proxy_wstunnel already enabled"
 
+sudo a2enmod headers 2>/dev/null || ok "mod_headers already enabled"
+
 # Install our Apache config (WebSocket proxy + directory permissions)
 sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/apache2/conf-available/listener.conf 2>/dev/null || sudo cp "$SCRIPT_DIR/config/apache-listener.conf" /etc/httpd/conf.d/listener.conf 2>/dev/null || true
 

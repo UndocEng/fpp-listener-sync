@@ -15,9 +15,9 @@
  */
 
 header('Content-Type: application/captive+json');
-header('Cache-Control: no-cache, no-store, must-revalidate');
+header('Cache-Control: private, no-store, max-age=0');
 
 echo json_encode([
     'captive' => true,
     'user-portal-url' => 'http://192.168.50.1/listen/'
-]);
+], JSON_UNESCAPED_SLASHES);
