@@ -477,16 +477,18 @@ if [ -x "$NFT" ]; then
   # Allow HTTP (Apache) and WebSocket (ws-sync) to 192.168.50.1 only
   sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 ip daddr 192.168.50.1 tcp dport '{80, 8080}' accept
 
-  # REJECT HTTPS (port 443) with TCP RST — do NOT accept or silently drop.
-  # Modern phones probe HTTPS first for connectivity checks. Sending TCP RST
-  # (instant "connection refused") makes the phone fall back to HTTP quickly,
-  # where our 302 redirect triggers the captive portal popup.
-  # Silent DROP = 30s timeout = "no internet". ACCEPT with bad cert = TLS error.
-  # TCP RST mimics WLED's approach (nothing on 443) — triggers captive portal.
-  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 tcp dport 443 reject with tcp reset
-
-  # DROP everything else on wlan1 — blocks access to FPP, SSH, other IPs
-  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 drop
+  # REJECT everything else on wlan1 — blocks access to FPP, SSH, other IPs.
+  # Using REJECT (not DROP) is critical for captive portal speed:
+  #   DROP = silent timeout (30s+) for each blocked port the phone tries
+  #   REJECT = instant failure, phone moves to next check immediately
+  # This matters because phones try many ports during captive portal detection:
+  #   - HTTPS (443) for connectivity checks
+  #   - DNS-over-TLS (853) before falling back to regular DNS
+  #   - QUIC/HTTP3 (UDP 443) for fast DNS resolution
+  # With DROP, each of these times out for 30s = "long wait" before portal popup.
+  # With REJECT, the phone gets instant RST/unreachable and proceeds quickly.
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 meta l4proto tcp reject with tcp reset
+  sudo $NFT add rule inet listener_filter wlan1_input iifname wlan1 reject
 
   ok "nftables firewall active (wlan1 locked to listener services)"
 else
