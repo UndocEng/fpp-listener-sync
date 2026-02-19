@@ -14,7 +14,8 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 5. A WebSocket connection to the Pi keeps the audio synced to FPP's current position
 6. No app install required — works in Safari, Chrome, Firefox on any phone
 
-7. ## Support This Project
+ 
+## Support This Project
 
 If this tool saved you time or made your show better, consider buying me a coffee or donate for me to get more tokkens:
 
@@ -30,8 +31,6 @@ For non-GitHub pages that support scripts, use the hosted button:
 </script>
 -->
 
-
----
 
 ## Important
 
