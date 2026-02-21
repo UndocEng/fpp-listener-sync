@@ -19,6 +19,9 @@ Wants=systemd-networkd.service
 Type=simple
 # Run hostapd with our custom config (SHOW_AUDIO on wlan1)
 ExecStart=/usr/sbin/hostapd /home/fpp/listen-sync/hostapd-listener.conf
+# Disable WiFi power save after AP starts — brcmfmac enables it at boot which
+# causes random client disconnections and dropped packets
+ExecStartPost=-/sbin/iw dev wlan1 set power_save off
 # Auto-restart if hostapd crashes (e.g., USB WiFi adapter briefly disconnects)
 Restart=always
 RestartSec=3

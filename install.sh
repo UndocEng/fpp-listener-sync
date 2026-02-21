@@ -57,8 +57,15 @@ fail()  { printf '%b\n' "${RED}[FAIL]${NC} $1"; exit 1; }
 VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "unknown")
 
 echo ""
-info "FPP Listener Sync - v${VERSION}"
+info "FPP Phone Listener - v${VERSION}"
 echo ""
+
+# Fix Windows line endings on all deployed files (in case cloned on Windows)
+if command -v sed >/dev/null 2>&1; then
+  find "$SCRIPT_DIR" \( -name "*.sh" -o -name "*.py" -o -name "*.service" \
+    -o -name "*.conf" -o -name "*.html" -o -name "*.php" -o -name "*.htaccess" \) \
+    -exec sed -i 's/\r$//' {} + 2>/dev/null || true
+fi
 
 # --- Step 1: Prerequisites ---
 # Verify this is actually an FPP system with the expected directory structure

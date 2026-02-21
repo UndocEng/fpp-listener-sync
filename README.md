@@ -1,9 +1,11 @@
 
-# FPP Listener Sync
+# FPP Phone Listener
 
 **Stream synced show audio to visitor phones — no app, no FM transmitter, no speakers.**
 
 Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to the currently playing FPP sequence — right from their phone browser.
+
+> **Looking for SBS+ mode?** If you want both an admin control page AND a public listener on a single Pi (dual-AP), see [fpp-eavesdrop-sbs-plus](https://github.com/UndocEng/fpp-eavesdrop-sbs-plus). This repo (FPP Phone Listener) is the standalone public listener for audience phones only.
 
 ## How It Works
 
@@ -73,7 +75,7 @@ You need to type commands into your Pi. There are three ways to do this:
 2. Type: `ssh fpp@fpp.local` and press Enter
 3. Enter password: `falcon`
 
-### Step 3: Install FPP Listener Sync
+### Step 3: Install FPP Phone Listener
 
 Copy and paste these commands one at a time into the terminal, pressing Enter after each one:
 
@@ -133,7 +135,7 @@ When a track starts playing or a phone joins mid-song:
 
 1. The browser **seeks to FPP's current position** and presses **play** immediately
 2. **Play-ahead latency compensation** fires `play()` slightly early to account for the device's audio startup delay (see below)
-3. After a 3-second **settle period**, the PLL takes over to correct any remaining error smoothly
+3. After a 1.5-second **settle period**, the PLL takes over to correct any remaining error smoothly
 
 ### Play-Ahead Latency Compensation
 
@@ -160,9 +162,11 @@ A **hard seek** is only performed if error exceeds 2 seconds (e.g., after a long
 
 ### Transport
 
-- **WebSocket** (primary): 100ms updates from the Pi, NTP-style clock offset estimation
+- **WebSocket** (primary): 200ms updates from the Pi, NTP-style clock offset estimation, concurrent broadcast to all clients via `asyncio.gather()`
 - **HTTP polling** (fallback): Automatic fallback if WebSocket is unavailable
 - Clock offset between the phone and Pi is estimated using NTP-style ping/pong measurements over WebSocket
+- **Clock-aware sync**: The `serverOk` check uses the measured clock offset when available, so sync works even if the Pi's clock is wrong (common on standalone APs with no NTP)
+- **Stale message handling**: Messages older than 2 seconds are discarded rather than clamped, preventing wrong-direction PLL corrections
 
 ## Measured Performance (v2.3.5)
 
@@ -472,6 +476,16 @@ sudo ./install.sh
 The installer is safe to run multiple times — it will restart everything and re-run the self-test.
 
 ## Changelog
+
+### v2.5.0
+- **Renamed to FPP Phone Listener** (was FPP Listener Sync) to clarify role as the audience-facing component alongside FPP Admin Eavesdrop
+- **Sync fix: removed elapsed clamp** — previously capped at 300ms which caused wrong-direction PLL corrections when messages were delayed 300-2000ms. Now discards messages >2s stale with no upper clamp, using true elapsed for accurate target position
+- **Sync fix: clock-aware serverOk check** — uses measured clock offset in timestamp comparison so sync works even when Pi clock is wrong (common on standalone APs with no RTC/NTP after reboot)
+- **Server: concurrent broadcast** — switched from sequential `await ws.send()` to `asyncio.gather()` so a slow client cannot delay messages to all other clients (critical with many phones on wlan1)
+- **Server: poll interval 100ms → 200ms** — reduces CPU load on Pi 3B with negligible sync impact
+- **WiFi: power save disabled** — added `ExecStartPost` to disable WiFi power save after AP starts (brcmfmac enables power save at boot, causing random client disconnections)
+- **Install: CRLF fix** — automatically fixes Windows line endings on all deployed files when cloned on Windows
+- Added cross-reference to [fpp-eavesdrop-sbs-plus](https://github.com/UndocEng/fpp-eavesdrop-sbs-plus) for SBS+ dual-AP mode
 
 ### v2.4.0
 - **Captive portal overhaul**: DHCP Option 114 (CAPPORT/RFC 8910), portal-api.php endpoint, FPP cache override

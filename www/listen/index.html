@@ -825,15 +825,17 @@ async function syncInner(msg){
   //
   // (phone_now + clockOffset) converts phone time to server time,
   // then subtracting server_ms gives us how many ms have passed since
-  // the server captured pos_ms. We clamp elapsed to [0, 300] to reject
-  // nonsense values (negative = future, >300ms = stale/unreliable).
+  // the server captured pos_ms. Messages older than 2 seconds are discarded
+  // as stale. No upper clamp — true elapsed is used for accurate target position.
   const nowMs=Date.now();
   const serverMs=Number(msg.server_ms);
   const rawPosMs=Number(msg.pos_ms||0);
 
   let targetMs=rawPosMs;
   // Sanity check: server_ms should be a Unix timestamp (>1e12) and within 5min of now
-  const serverOk=Number.isFinite(serverMs)&&serverMs>1e12&&Math.abs(nowMs-serverMs)<300000;
+  // Use clock offset for comparison when available (Pi may have wrong clock — no RTC/NTP)
+  const timeDiff=clockOffsetValid?Math.abs((nowMs+clockOffset)-serverMs):Math.abs(nowMs-serverMs);
+  const serverOk=Number.isFinite(serverMs)&&serverMs>1e12&&timeDiff<300000;
   if(serverOk){
     let elapsed;
     if(clockOffsetValid){
@@ -844,7 +846,8 @@ async function syncInner(msg){
       elapsed=nowMs-serverMs;
     }
     if(!Number.isFinite(elapsed))elapsed=0;
-    elapsed=clamp(elapsed,0,300);  // 0–300ms is a reasonable transit time
+    if(elapsed>2000){return;}
+    if(elapsed<0)elapsed=0;
     targetMs=rawPosMs+elapsed;
   }else{
     log('SERVER_MS INVALID: '+serverMs+' nowMs='+nowMs+' diff='+Math.abs(nowMs-serverMs));
