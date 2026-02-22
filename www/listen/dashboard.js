@@ -199,7 +199,7 @@ function buildInternetSettings(iface, fppData) {
         // Scan button
         html += '<div class="row mb-2">';
         html += '<div class="col-sm-9 offset-sm-3">';
-        html += '<button class="btn btn-outline-info btn-sm btn-wifi-scan" data-iface="' + iface.name + '">';
+        html += '<button class="btn btn-info btn-sm btn-wifi-scan" data-iface="' + iface.name + '">';
         html += '<i class="fas fa-search"></i> Scan WiFi</button>';
         html += '<span class="scan-status-' + iface.name + ' ms-2"></span>';
         html += '</div></div>';
@@ -264,7 +264,7 @@ function buildShowSettings(iface, fppData) {
     // Scan button
     html += '<div class="row mb-2">';
     html += '<div class="col-sm-9 offset-sm-3">';
-    html += '<button class="btn btn-outline-info btn-sm btn-wifi-scan" data-iface="' + iface.name + '">';
+    html += '<button class="btn btn-info btn-sm btn-wifi-scan" data-iface="' + iface.name + '">';
     html += '<i class="fas fa-search"></i> Scan WiFi</button>';
     html += '<span class="scan-status-' + iface.name + ' ms-2"></span>';
     html += '</div></div>';
