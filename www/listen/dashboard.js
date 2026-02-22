@@ -206,6 +206,9 @@ function buildInternetSettings(iface, fppData) {
 
         // Scan results (hidden initially)
         html += '<div class="scan-results-' + iface.name + ' mb-2" style="display:none;"></div>';
+
+        // Tethering section (uses FPP's built-in tethering)
+        html += buildTetherSection(iface);
     }
 
     // Protocol radio
@@ -269,6 +272,9 @@ function buildShowSettings(iface, fppData) {
     // Scan results (hidden initially)
     html += '<div class="scan-results-' + iface.name + ' mb-2" style="display:none;"></div>';
 
+    // Tethering section (uses FPP's built-in tethering)
+    html += buildTetherSection(iface);
+
     // Protocol radio
     html += '<div class="row mb-2">';
     html += '<label class="col-sm-3 col-form-label">Protocol</label>';
@@ -295,6 +301,57 @@ function buildShowSettings(iface, fppData) {
     html += '<i class="fas fa-save"></i> Save & Apply</button>';
     html += '<span class="save-status-' + iface.name + ' ms-2"></span>';
     html += '</div>';
+
+    return html;
+}
+
+// =============================================================================
+// Tethering Section (uses FPP's built-in tethering — no duplication)
+// =============================================================================
+// FPP stores tethering config in its settings system:
+//   EnableTethering: 0="If no connection", 1="Always", 2="Disabled"
+//   TetherInterface: which wlan to use (e.g. "wlan0")
+//   TetherSSID / TetherPSK: hotspot credentials
+// We read from FPP's global `settings` object (injected by FPP's header)
+// and write via FPP's `SetSetting()` function. No custom backend needed.
+function buildTetherSection(iface) {
+    if (!iface.wireless) return '';
+
+    var fppS = (typeof settings !== 'undefined') ? settings : {};
+    var tetherEnabled = fppS.EnableTethering;
+    var tetherIface = fppS.TetherInterface || '';
+    var tetherSsid = fppS.TetherSSID || 'FPP';
+
+    // Checkbox checked if tethering is enabled AND assigned to this interface
+    var isEnabled = (tetherEnabled !== '2');
+    var isThisIface = tetherIface ? (tetherIface === iface.name) : false;
+    var isChecked = isEnabled && isThisIface;
+
+    // Mode label
+    var modeLabel = 'If no connection';
+    if (tetherEnabled === '1') modeLabel = 'Always';
+    else if (tetherEnabled === '2') modeLabel = 'Disabled';
+
+    var html = '<hr class="my-2">';
+    html += '<div class="d-flex align-items-center justify-content-between">';
+    html += '<div class="form-check mb-0">';
+    html += '<input class="form-check-input tether-check" type="checkbox" id="tether-' + iface.name + '"';
+    html += ' data-iface="' + iface.name + '"' + (isChecked ? ' checked' : '') + '>';
+    html += '<label class="form-check-label fw-bold" for="tether-' + iface.name + '">';
+    html += '<i class="fas fa-mobile-alt me-1"></i> Tethering</label>';
+    html += '</div>';
+    html += '<a href="/networkconfig-original.php" target="_blank" class="btn btn-outline-info btn-sm">';
+    html += '<i class="fas fa-cog"></i> Tether Settings</a>';
+    html += '</div>';
+
+    if (isChecked) {
+        html += '<small class="text-muted d-block mt-1 ms-4">';
+        html += 'Mode: ' + modeLabel + ' &bull; SSID: ' + escHtml(tetherSsid) + ' &bull; IP: 192.168.8.1';
+        html += '</small>';
+    } else {
+        html += '<small class="text-muted d-block mt-1 ms-4">';
+        html += 'Creates a hotspot if WiFi disconnects. Requires reboot.</small>';
+    }
 
     return html;
 }
@@ -708,6 +765,31 @@ $(document).ready(function() {
         var iface = $(this).data('iface');
         $('#field-' + iface + '-ssid').val(ssid);
         $('.scan-results-' + iface).slideUp(200);
+    });
+
+    // Tethering checkbox toggle (uses FPP's built-in tethering settings)
+    $(document).on('change', '.tether-check', function() {
+        var iface = $(this).data('iface');
+        var checked = $(this).is(':checked');
+
+        if (typeof SetSetting === 'function') {
+            if (checked) {
+                SetSetting('TetherInterface', iface, 0, 1, true);
+                SetSetting('EnableTethering', '0', 0, 1);
+            } else {
+                SetSetting('EnableTethering', '2', 0, 1);
+            }
+        } else {
+            // Fallback: direct API calls if FPP's SetSetting is unavailable
+            if (checked) {
+                $.ajax({ url: '/api/settings/TetherInterface', method: 'PUT', data: iface });
+                $.ajax({ url: '/api/settings/EnableTethering', method: 'PUT', data: '0' });
+            } else {
+                $.ajax({ url: '/api/settings/EnableTethering', method: 'PUT', data: '2' });
+            }
+            $.jGrowl('Tethering ' + (checked ? 'enabled' : 'disabled') + '. Reboot required.', { themeState: 'success' });
+        }
+        setTimeout(loadDashboard, 1000);
     });
 
     // Password show/hide toggle
