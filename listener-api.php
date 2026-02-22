@@ -372,16 +372,22 @@ function restartService() {
 function runSelfTest() {
     $results = [];
 
-    // Service checks
+    // Check if the listener AP interface exists
+    $iface = getHostapdValue('interface') ?: 'wlan1';
+    $ifaceExists = !empty(trim(shell_exec("ip link show $iface 2>/dev/null") ?? ''));
+
+    // Service checks — skip listener-ap if AP interface doesn't exist
     foreach (['listener-ap', 'dnsmasq', 'ws-sync'] as $svc) {
+        if ($svc === 'listener-ap' && !$ifaceExists) continue;
         $status = serviceStatus($svc);
         $results[] = ['test' => "$svc service", 'pass' => $status === 'active', 'detail' => $status];
     }
 
-    // wlan1 IP check
-    $iface = getHostapdValue('interface') ?: 'wlan1';
-    $ip = trim(shell_exec("ip addr show $iface 2>/dev/null | grep 'inet ' | awk '{print $2}'") ?? '');
-    $results[] = ['test' => "$iface IP", 'pass' => !empty($ip), 'detail' => $ip ?: 'no IP'];
+    // AP interface IP check — skip if interface doesn't exist
+    if ($ifaceExists) {
+        $ip = trim(shell_exec("ip addr show $iface 2>/dev/null | grep 'inet ' | awk '{print $2}'") ?? '');
+        $results[] = ['test' => "$iface IP", 'pass' => !empty($ip), 'detail' => $ip ?: 'no IP'];
+    }
 
     // nftables check
     $nft = trim(shell_exec('sudo /usr/sbin/nft list table inet listener_filter 2>/dev/null') ?? '');
