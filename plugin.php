@@ -39,13 +39,13 @@ $pluginName = 'fpp-listener-sync';
 
 <!-- Quick Links Bar -->
 <div class="mb-4">
-    <a id="link-listener" href="#" target="_blank" class="btn btn-outline-light btn-sm me-1">
+    <a id="link-listener" href="#" target="_blank" class="btn btn-outline-info btn-sm me-1">
         <i class="fas fa-broadcast-tower"></i> Listener Page
     </a>
-    <a id="link-qrcode" href="#" target="_blank" class="btn btn-outline-light btn-sm me-1">
+    <a id="link-qrcode" href="#" target="_blank" class="btn btn-outline-info btn-sm me-1">
         <i class="fas fa-qrcode"></i> QR Code
     </a>
-    <a id="link-sign" href="#" target="_blank" class="btn btn-outline-light btn-sm me-1">
+    <a id="link-sign" href="#" target="_blank" class="btn btn-outline-info btn-sm me-1">
         <i class="fas fa-print"></i> Print Sign
     </a>
 </div>
@@ -68,7 +68,7 @@ $pluginName = 'fpp-listener-sync';
                     <input type="checkbox" id="auto-refresh-clients" class="form-check-input" checked>
                     Auto-refresh
                 </label>
-                <button id="btn-refresh-clients" class="btn btn-outline-light btn-sm">
+                <button id="btn-refresh-clients" class="btn btn-outline-info btn-sm">
                     <i class="fas fa-sync-alt"></i>
                 </button>
             </div>
@@ -100,7 +100,7 @@ $pluginName = 'fpp-listener-sync';
          data-bs-toggle="collapse" data-bs-target="#logs-collapse" role="button">
         <h5 class="mb-0"><i class="fas fa-file-alt"></i> Logs & Diagnostics</h5>
         <div>
-            <button id="btn-selftest" class="btn btn-outline-light btn-sm me-1">
+            <button id="btn-selftest" class="btn btn-outline-info btn-sm me-1">
                 <i class="fas fa-stethoscope"></i> Self-Test
             </button>
             <button id="btn-restart-ap" class="btn btn-outline-warning btn-sm me-1" title="Restart Listener AP">
@@ -130,7 +130,7 @@ $pluginName = 'fpp-listener-sync';
                     <option value="100">100 lines</option>
                     <option value="200">200 lines</option>
                 </select>
-                <button id="btn-load-logs" class="btn btn-outline-light btn-sm ms-1">
+                <button id="btn-load-logs" class="btn btn-info btn-sm ms-1">
                     <i class="fas fa-download"></i> Load
                 </button>
             </div>
