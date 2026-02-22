@@ -335,9 +335,10 @@ function loadTetherStatus() {
         $.get('/api/settings/TetherInterface'),
         $.get('/api/settings/TetherSSID')
     ).done(function(r1, r2, r3) {
-        var mode = String(r1[0]);
-        var iface = String(r2[0]);
-        var ssid = String(r3[0]) || 'FPP';
+        // FPP API returns JSON objects with a .value field
+        var mode = String(r1[0].value != null ? r1[0].value : r1[0]);
+        var iface = String(r2[0].value != null ? r2[0].value : r2[0]);
+        var ssid = String(r3[0].value != null ? r3[0].value : r3[0]) || 'FPP';
 
         var modeLabel = 'Disabled';
         if (mode === '0') modeLabel = 'If no connection';
