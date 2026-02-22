@@ -133,6 +133,9 @@ $pluginName = 'fpp-listener-sync';
                 <button id="btn-load-logs" class="btn btn-info btn-sm ms-1">
                     <i class="fas fa-download"></i> Load
                 </button>
+                <button id="btn-clear-logs" class="btn btn-outline-danger btn-sm ms-1">
+                    <i class="fas fa-trash-alt"></i> Clear
+                </button>
             </div>
             <pre id="log-output" class="log-output">Select a log source and click Load.</pre>
         </div>

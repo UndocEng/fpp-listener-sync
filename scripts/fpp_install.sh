@@ -300,6 +300,8 @@ www-data ALL=(ALL) NOPASSWD: /sbin/ip link *
 www-data ALL=(ALL) NOPASSWD: /usr/bin/sed -i *
 www-data ALL=(ALL) NOPASSWD: /usr/sbin/wpa_cli *
 www-data ALL=(ALL) NOPASSWD: /usr/bin/tee /home/fpp/listen-sync/roles.json
+www-data ALL=(ALL) NOPASSWD: /usr/bin/journalctl --rotate
+www-data ALL=(ALL) NOPASSWD: /usr/bin/journalctl --vacuum-time=1s *
 SUDOERS
 sudo chmod 440 "$SUDOERS_FILE"
 if sudo visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then

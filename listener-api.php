@@ -42,6 +42,9 @@ switch ($action) {
     case 'get_logs':
         echo json_encode(getLogs());
         break;
+    case 'clear_logs':
+        echo json_encode(clearLogs());
+        break;
     case 'restart_service':
         echo json_encode(restartService());
         break;
@@ -351,6 +354,27 @@ function getLogs() {
     }
 
     return ['success' => true, 'source' => $source, 'log' => $output];
+}
+
+function clearLogs() {
+    $source = $_POST['source'] ?? '';
+    $allowed = ['ws-sync', 'listener-ap', 'dnsmasq', 'sync'];
+    if (!in_array($source, $allowed)) {
+        return ['success' => false, 'error' => 'Invalid log source'];
+    }
+
+    if ($source === 'sync') {
+        $logFile = '/home/fpp/listen-sync/sync.log';
+        if (file_exists($logFile)) {
+            file_put_contents($logFile, '');
+        }
+    } else {
+        // Clear journalctl logs for this service
+        exec("sudo journalctl --rotate 2>&1");
+        exec("sudo journalctl --vacuum-time=1s -u $source 2>&1");
+    }
+
+    return ['success' => true, 'message' => "Logs cleared for $source"];
 }
 
 // =============================================================================

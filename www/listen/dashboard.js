@@ -728,6 +728,18 @@ function loadLogs() {
     });
 }
 
+function clearLogs() {
+    var source = $('#log-source').val();
+    if (!confirm('Clear ' + source + ' logs?')) return;
+    pluginAPI('clear_logs', { source: source }, function(res) {
+        if (res.success) {
+            $('#log-output').text('(logs cleared)');
+        } else {
+            $('#log-output').text('Error: ' + (res.error || 'Failed to clear logs'));
+        }
+    });
+}
+
 function runSelfTest() {
     $('#btn-selftest').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Testing...');
     pluginAPI('selftest', null, function(res) {
@@ -840,6 +852,7 @@ $(document).ready(function() {
     // Logs & diagnostics
     $('#btn-selftest').on('click', runSelfTest);
     $('#btn-load-logs').on('click', loadLogs);
+    $('#btn-clear-logs').on('click', clearLogs);
     $('#btn-restart-ap').on('click', function() { restartServiceBtn('listener-ap'); });
     $('#btn-restart-ws').on('click', function() { restartServiceBtn('ws-sync'); });
     $('#btn-restart-dns').on('click', function() { restartServiceBtn('dnsmasq'); });
