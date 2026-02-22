@@ -319,16 +319,14 @@ function buildTetherSection(iface) {
     var tetherIface = fppS.TetherInterface || '';
     var tetherSsid = fppS.TetherSSID || 'FPP';
 
-    // Determine current tether status for display
-    var isEnabled = (tetherEnabled !== '2');
-    var isThisIface = tetherIface ? (tetherIface === iface.name) : false;
-    var isActive = isEnabled && isThisIface;
+    // Show global tether status — only on the tether interface's card (or first wireless if unset)
+    if (tetherIface && tetherIface !== iface.name) return '';
 
-    var statusText = 'Disabled';
-    if (isActive) {
-        var modeLabel = (tetherEnabled === '1') ? 'Always' : 'If no connection';
-        statusText = modeLabel + ' &bull; SSID: ' + escHtml(tetherSsid) + ' &bull; IP: 192.168.8.1';
-    }
+    var modeLabel = 'Disabled';
+    if (tetherEnabled === '0') modeLabel = 'If no connection';
+    else if (tetherEnabled === '1') modeLabel = 'Always';
+
+    var statusText = tetherIface + ' / ' + modeLabel + ' / SSID: ' + escHtml(tetherSsid);
 
     var html = '<hr class="my-2">';
     html += '<div class="row mb-2">';

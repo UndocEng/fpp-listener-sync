@@ -87,6 +87,12 @@ sudo cp "$PLUGIN_DIR/www/listen/logo_amber.png" "$LISTEN_WEB/logo_amber.png"
 sudo cp "$PLUGIN_DIR/www/listen/dashboard.js" "$LISTEN_WEB/dashboard.js"
 sudo cp "$PLUGIN_DIR/www/listen/dashboard.css" "$LISTEN_WEB/dashboard.css"
 sudo cp "$PLUGIN_DIR/VERSION" "$LISTEN_WEB/VERSION"
+# Also update plugin directory so FPP's plugin.php handler reads correct version
+FPP_PLUGIN_DIR="/home/fpp/media/plugins/fpp-listener-sync"
+if [ -d "$FPP_PLUGIN_DIR" ]; then
+    sudo cp "$PLUGIN_DIR/VERSION" "$FPP_PLUGIN_DIR/VERSION"
+    sudo cp "$PLUGIN_DIR/plugin.php" "$FPP_PLUGIN_DIR/plugin.php"
+fi
 sudo cp "$PLUGIN_DIR/www/qrcode.html" "$APACHE_ROOT/qrcode.html"
 sudo cp "$PLUGIN_DIR/www/print-sign.html" "$APACHE_ROOT/print-sign.html"
 sudo cp "$PLUGIN_DIR/www/qrcode.min.js" "$APACHE_ROOT/qrcode.min.js"
