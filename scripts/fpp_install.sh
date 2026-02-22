@@ -322,7 +322,9 @@ echo "========================================="
 
 info "Running self-test..."
 ERRORS=0
-systemctl is-active --quiet listener-ap && ok "listener-ap: running" || { printf '%b\n' "${RED}[FAIL] listener-ap${NC}"; ERRORS=$((ERRORS+1)); }
+if ip link show wlan1 >/dev/null 2>&1; then
+  systemctl is-active --quiet listener-ap && ok "listener-ap: running" || { printf '%b\n' "${RED}[FAIL] listener-ap${NC}"; ERRORS=$((ERRORS+1)); }
+fi
 systemctl is-active --quiet dnsmasq && ok "dnsmasq: running" || { printf '%b\n' "${RED}[FAIL] dnsmasq${NC}"; ERRORS=$((ERRORS+1)); }
 
 if ip link show wlan1 >/dev/null 2>&1; then
