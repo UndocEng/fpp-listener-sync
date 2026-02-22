@@ -51,6 +51,7 @@ except ImportError:
 
 # --- Configuration ---
 FPP_API_URL = "http://127.0.0.1/api/fppd/status"  # FPP's local REST API
+FPP_MULTISYNC_URL = "http://127.0.0.1/api/fppd/multiSyncSystems"  # Discover multisync peers
 WS_HOST = "0.0.0.0"           # Listen on all interfaces
 WS_PORT = 8080                 # Apache proxies /ws on port 80 to here
 POLL_INTERVAL_MS = 200         # Poll FPP API every 200ms — balances sync accuracy with Pi load
@@ -58,12 +59,15 @@ MUSIC_DIR = Path("/home/fpp/media/music")  # Where FPP stores music files
 AUDIO_FORMATS = ["mp3", "m4a", "mp4", "aac", "ogg", "wav"]  # Supported audio formats
 SYNC_LOG_PATH = Path("/home/fpp/listen-sync/sync.log")  # Client sync report log
 SYNC_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB max before rotation
+MASTER_DISCOVER_INTERVAL = 30  # Re-check for master every 30 seconds
 
 logger = logging.getLogger("ws-sync")
 
 # --- Shared State ---
 clients = set()        # All currently connected WebSocket clients
 current_state = {}     # Last known FPP state (broadcast to new clients on connect)
+master_api_url = None  # Set dynamically if running on a remote (polls master instead of local)
+_last_master_check = 0 # Timestamp of last master discovery attempt
 
 
 def write_sync_log(client_ip, data):
@@ -165,15 +169,74 @@ def find_audio_file(base):
     return ""
 
 
+def discover_master():
+    """Check if local FPP is in remote mode; if so, find the master's API URL.
+
+    FPP remotes (mode=8) don't report playback position in their local status
+    API — milliseconds_elapsed stays at 0. To get real position data, we need
+    to poll the master (mode=2, player) instead.
+
+    Uses /api/fppd/multiSyncSystems to find non-local player-mode systems.
+    Returns the master's status API URL, or None if not in remote mode or
+    no master found.
+    """
+    global master_api_url, _last_master_check
+    now = time.time()
+
+    # Don't re-check too frequently
+    if now - _last_master_check < MASTER_DISCOVER_INTERVAL:
+        return master_api_url
+    _last_master_check = now
+
+    try:
+        # Check local mode
+        req = urllib.request.Request(FPP_API_URL)
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            local_status = json.loads(resp.read())
+
+        mode = int(local_status.get("mode", 0))
+        if mode != 8:  # Not remote mode — poll localhost as normal
+            if master_api_url is not None:
+                logger.info("No longer in remote mode, polling localhost")
+                master_api_url = None
+            return None
+
+        # Remote mode — find the master via multiSyncSystems
+        req = urllib.request.Request(FPP_MULTISYNC_URL)
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            data = json.loads(resp.read())
+
+        for sys in data.get("systems", []):
+            if sys.get("local") == 0 and sys.get("fppMode") == 2:
+                addr = sys.get("address", "")
+                if addr:
+                    url = f"http://{addr}/api/fppd/status"
+                    if url != master_api_url:
+                        logger.info(f"Remote mode: polling master at {url}")
+                    master_api_url = url
+                    return master_api_url
+
+        logger.warning("Remote mode but no master found in multiSyncSystems")
+        return master_api_url
+    except Exception as e:
+        logger.debug(f"Master discovery error: {e}")
+        return master_api_url
+
+
 def fetch_fpp_status():
-    """Synchronous HTTP call to FPP's local REST API.
+    """Synchronous HTTP call to FPP's status API.
+
+    If running on a remote (master_api_url is set), polls the master instead
+    of localhost. This is necessary because FPP remotes report
+    milliseconds_elapsed=0 in their local API even while playing.
 
     Runs in a thread (via asyncio.to_thread) because urllib is blocking.
     Returns the parsed JSON response, or None on any error (timeout, connection
     refused, malformed JSON). The caller handles None by keeping the last state.
     """
+    url = master_api_url or FPP_API_URL
     try:
-        req = urllib.request.Request(FPP_API_URL)
+        req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             return json.loads(resp.read())
     except Exception:
@@ -255,6 +318,9 @@ async def broadcast(message):
 async def fpp_poll_loop():
     """Main loop: poll FPP API every 200ms, broadcast state to all clients.
 
+    On a remote Pi (mode=8), auto-discovers the master and polls its API
+    instead of localhost, since remotes don't report playback position locally.
+
     Timing note: server_ms is the midpoint of the API call (average of before
     and after timestamps). This is the best estimate of when pos_ms was valid.
     Clients use server_ms to compute elapsed time since the snapshot.
@@ -266,6 +332,8 @@ async def fpp_poll_loop():
     global current_state
     while True:
         t_before = time.time()
+        # Check if we're on a remote and need to poll the master instead
+        await asyncio.to_thread(discover_master)
         # Run the blocking HTTP call in a thread to avoid stalling the event loop
         src = await asyncio.to_thread(fetch_fpp_status)
         t_after = time.time()
