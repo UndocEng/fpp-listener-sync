@@ -92,6 +92,7 @@ FPP_PLUGIN_DIR="/home/fpp/media/plugins/fpp-listener-sync"
 if [ -d "$FPP_PLUGIN_DIR" ]; then
     sudo cp "$PLUGIN_DIR/VERSION" "$FPP_PLUGIN_DIR/VERSION"
     sudo cp "$PLUGIN_DIR/plugin.php" "$FPP_PLUGIN_DIR/plugin.php"
+    sudo cp "$PLUGIN_DIR/listener-api.php" "$FPP_PLUGIN_DIR/listener-api.php"
 fi
 sudo cp "$PLUGIN_DIR/www/qrcode.html" "$APACHE_ROOT/qrcode.html"
 sudo cp "$PLUGIN_DIR/www/print-sign.html" "$APACHE_ROOT/print-sign.html"
