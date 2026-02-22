@@ -89,7 +89,9 @@ sudo cp "$PLUGIN_DIR/www/listen/dashboard.css" "$LISTEN_WEB/dashboard.css"
 sudo cp "$PLUGIN_DIR/VERSION" "$LISTEN_WEB/VERSION"
 # Also update plugin directory so FPP's plugin.php handler reads correct version
 FPP_PLUGIN_DIR="/home/fpp/media/plugins/fpp-listener-sync"
-if [ -d "$FPP_PLUGIN_DIR" ]; then
+REAL_PLUGIN=$(readlink -f "$PLUGIN_DIR")
+REAL_FPP_PLUGIN=$(readlink -f "$FPP_PLUGIN_DIR")
+if [ -d "$FPP_PLUGIN_DIR" ] && [ "$REAL_PLUGIN" != "$REAL_FPP_PLUGIN" ]; then
     sudo cp "$PLUGIN_DIR/VERSION" "$FPP_PLUGIN_DIR/VERSION"
     sudo cp "$PLUGIN_DIR/plugin.php" "$FPP_PLUGIN_DIR/plugin.php"
     sudo cp "$PLUGIN_DIR/listener-api.php" "$FPP_PLUGIN_DIR/listener-api.php"
