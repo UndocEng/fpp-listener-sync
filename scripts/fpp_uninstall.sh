@@ -16,8 +16,12 @@ info()  { printf '%b\n' "${CYAN}[INFO]${NC} $1"; }
 ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
 warn()  { printf '%b\n' "${YELLOW}[WARN]${NC} $1"; }
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+VERSION=$(cat "$PLUGIN_DIR/VERSION" 2>/dev/null || echo "unknown")
+
 echo ""
-info "Uninstalling FPP Phone Listener..."
+info "Uninstalling FPP Phone Listener v${VERSION}..."
 
 # --- Stop and remove systemd services ---
 info "Stopping services..."
@@ -113,6 +117,8 @@ sudo ip link set wlan1 down 2>/dev/null || true
 sudo ip addr flush dev wlan1 2>/dev/null || true
 
 echo ""
-ok "FPP Phone Listener removed."
+echo "========================================="
+printf '%b\n' "${GREEN}  Uninstall successful! (was v${VERSION})${NC}"
+echo "========================================="
 echo ""
 info "FPP network settings are preserved. Reboot recommended."
