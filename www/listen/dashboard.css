@@ -5,6 +5,11 @@
  * FPP's Bootstrap 5 dark theme handles most styling.
  * ============================================================================= */
 
+/* Interface card grid — don't stretch shorter cards to match taller neighbors */
+#interface-cards {
+    align-items: flex-start;
+}
+
 /* Interface cards */
 .iface-card {
     border-color: #444;

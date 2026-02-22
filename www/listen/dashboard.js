@@ -12,6 +12,7 @@ var pluginName = 'fpp-listener-sync';
 var clientRefreshTimer = null;
 var currentInterfaces = [];
 var currentRoles = {};
+var currentFppMap = {};
 
 // =============================================================================
 // API Helpers
@@ -71,13 +72,13 @@ function loadDashboard() {
 
             // Also get FPP's interface data for IP/config details
             fppAPI('GET', 'interface', null, function(fppData) {
-                var fppMap = {};
+                currentFppMap = {};
                 if (Array.isArray(fppData)) {
                     fppData.forEach(function(iface) {
-                        fppMap[iface.ifname] = iface;
+                        currentFppMap[iface.ifname] = iface;
                     });
                 }
-                renderCards(currentInterfaces, currentRoles, fppMap);
+                renderCards(currentInterfaces, currentRoles, currentFppMap);
             });
         });
     });
@@ -107,14 +108,10 @@ function renderCards(interfaces, roles, fppMap) {
         $('#clients-section').hide();
     }
 
-    // Update quick links
-    pluginAPI('get_status', null, function(res) {
-        if (!res.success) return;
-        var ip = (res.wlanIP || '192.168.50.1').replace(/\/.*/, '');
-        $('#link-listener').attr('href', 'http://' + ip + '/listen/');
-        $('#link-qrcode').attr('href', '/qrcode.html');
-        $('#link-sign').attr('href', '/print-sign.html');
-    });
+    // Update quick links (use relative paths so they work from any IP the admin is on)
+    $('#link-listener').attr('href', '/listen/');
+    $('#link-qrcode').attr('href', '/qrcode.html');
+    $('#link-sign').attr('href', '/print-sign.html');
 }
 
 function buildCard(iface, role, fppData) {
@@ -372,11 +369,40 @@ function buildListenerSettings(iface) {
     return html;
 }
 
+function getSubnet24(ip) {
+    if (!ip) return '';
+    var parts = ip.replace(/\/.*/, '').split('.');
+    return parts.length >= 3 ? parts[0] + '.' + parts[1] + '.' + parts[2] : '';
+}
+
+function checkSubnetConflicts(apIp, listenerIface) {
+    var apSubnet = getSubnet24(apIp);
+    if (!apSubnet) return [];
+    var conflicts = [];
+    currentInterfaces.forEach(function(iface) {
+        if (iface.name === listenerIface) return;
+        var fpp = currentFppMap[iface.name];
+        if (!fpp) return;
+        // Check configured address
+        var cfgAddr = (fpp.config && fpp.config.ADDRESS) ? fpp.config.ADDRESS : '';
+        if (cfgAddr && getSubnet24(cfgAddr) === apSubnet) {
+            conflicts.push({ iface: iface.label || iface.name, ip: cfgAddr, source: 'configured' });
+        }
+        // Check current live address
+        var liveAddr = fpp.addr || '';
+        if (liveAddr && liveAddr !== cfgAddr && getSubnet24(liveAddr) === apSubnet) {
+            conflicts.push({ iface: iface.label || iface.name, ip: liveAddr, source: 'active' });
+        }
+    });
+    return conflicts;
+}
+
 function loadListenerConfig(ifaceName) {
     pluginAPI('get_status', null, function(statusRes) {
         pluginAPI('get_config', null, function(cfgRes) {
             if (!cfgRes.success) return;
             var cfg = cfgRes.config;
+            var apIp = cfg.ap_ip || '192.168.50.1';
             var html = '';
 
             // Service status row
@@ -389,6 +415,28 @@ function loadListenerConfig(ifaceName) {
                 if (statusRes.clientCount > 0) {
                     html += '<span class="badge bg-info ms-1">' + statusRes.clientCount + ' client' + (statusRes.clientCount !== 1 ? 's' : '') + '</span>';
                 }
+                html += '</div>';
+            }
+
+            // Network isolation notice
+            html += '<div class="alert alert-info py-2 mb-3" style="font-size:0.85em;">';
+            html += '<i class="fas fa-shield-alt me-1"></i> <strong>Isolated network.</strong> ';
+            html += 'This interface runs a standalone access point with its own DHCP, DNS, and firewall. ';
+            html += 'Devices on this network <strong>cannot</strong> reach the show network, internet, or FPP admin. ';
+            html += 'IP forwarding is disabled and all non-listener traffic is rejected.';
+            html += '</div>';
+
+            // Subnet conflict check
+            var conflicts = checkSubnetConflicts(apIp, ifaceName);
+            if (conflicts.length > 0) {
+                html += '<div class="alert alert-warning py-2 mb-3" style="font-size:0.85em;">';
+                html += '<i class="fas fa-exclamation-triangle me-1"></i> <strong>Subnet conflict!</strong> ';
+                html += 'The AP subnet <code>' + getSubnet24(apIp) + '.x</code> overlaps with: ';
+                conflicts.forEach(function(c, i) {
+                    if (i > 0) html += ', ';
+                    html += '<strong>' + c.iface + '</strong> (' + c.ip + ')';
+                });
+                html += '. Change the AP IP to a different subnet to avoid routing issues.';
                 html += '</div>';
             }
 
@@ -408,7 +456,7 @@ function loadListenerConfig(ifaceName) {
 
             html += inputRow(ifaceName, 'password', 'Password', '', 'Open (no password)', 'password');
             html += '<div class="row mb-2"><div class="col-sm-9 offset-sm-3"><small class="form-text">Leave blank for open network. 8-63 chars for WPA2.</small></div></div>';
-            html += inputRow(ifaceName, 'ap_ip', 'AP IP Address', cfg.ap_ip || '192.168.50.1', '192.168.50.1');
+            html += inputRow(ifaceName, 'ap_ip', 'AP IP Address', apIp, '192.168.50.1');
 
             // Save button
             html += '<div class="mt-3">';
