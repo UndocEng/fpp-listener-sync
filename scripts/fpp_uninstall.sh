@@ -75,6 +75,15 @@ sudo rm -f /etc/apache2/conf-available/listener.conf
 sudo rm -f /etc/apache2/conf-enabled/listener.conf
 sudo a2disconf listener 2>/dev/null || true
 
+# --- Restore network config page ---
+info "Restoring network config page..."
+if [ -f /opt/fpp/www/networkconfig.php.listener-backup ]; then
+  sudo mv /opt/fpp/www/networkconfig.php.listener-backup /opt/fpp/www/networkconfig.php
+  ok "Restored original networkconfig.php"
+else
+  warn "No networkconfig.php backup found"
+fi
+
 # --- Remove sudoers ---
 info "Removing sudoers..."
 sudo rm -f /etc/sudoers.d/fpp-listener

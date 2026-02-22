@@ -124,6 +124,20 @@ sudo a2dismod ssl 2>/dev/null || true
 sudo systemctl restart apache2 2>/dev/null || sudo systemctl restart httpd 2>/dev/null || true
 ok "Apache configured"
 
+# --- Step 8b: Replace FPP network config page with plugin redirect ---
+info "Redirecting network config page to plugin dashboard..."
+NETCONFIG="$APACHE_ROOT/networkconfig.php"
+if [ -f "$NETCONFIG" ] && [ ! -f "$NETCONFIG.listener-backup" ]; then
+  sudo cp "$NETCONFIG" "$NETCONFIG.listener-backup"
+  info "Backed up original networkconfig.php"
+fi
+sudo tee "$NETCONFIG" > /dev/null <<'PHPREDIRECT'
+<?php
+header('Location: plugin.php?plugin=fpp-listener-sync&page=plugin.php');
+exit;
+PHPREDIRECT
+ok "Network page redirects to plugin dashboard"
+
 # Music symlink
 if [ ! -L "$APACHE_ROOT/music" ] && [ ! -d "$APACHE_ROOT/music" ]; then
   sudo ln -s "$MUSIC_DIR" "$APACHE_ROOT/music"
@@ -268,6 +282,8 @@ www-data ALL=(ALL) NOPASSWD: /usr/sbin/nft *
 www-data ALL=(ALL) NOPASSWD: /sbin/ip addr *
 www-data ALL=(ALL) NOPASSWD: /sbin/ip link *
 www-data ALL=(ALL) NOPASSWD: /usr/bin/sed -i *
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/wpa_cli *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/tee /home/fpp/listen-sync/roles.json
 SUDOERS
 sudo chmod 440 "$SUDOERS_FILE"
 if sudo visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then

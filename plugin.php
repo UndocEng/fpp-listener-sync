@@ -1,221 +1,140 @@
 <?php
 // =============================================================================
-// plugin.php — FPP Phone Listener Admin Dashboard
+// plugin.php — FPP Phone Listener Network Dashboard
 // =============================================================================
-// This is the main plugin page. FPP's plugin.php handler wraps it with the
-// standard FPP header, navbar, and footer. jQuery and Bootstrap 5 are available.
+// Card-based network configuration page. Each detected interface gets its own
+// card with a configurable role (Internet, Show, Listener, Unused).
 //
-// Tabs: Status | AP Configuration | Connected Clients | Logs & Diagnostics
+// Replaces FPP's networkconfig.php when the plugin is installed.
+// FPP's plugin.php handler wraps this with header/navbar/footer.
+// jQuery 3.7.1 and Bootstrap 5 are available from FPP.
+//
+// JS/CSS are in static/ (not js/ or css/) to avoid FPP's auto-include which
+// serves files with immutable 1-year cache and no version busting.
+// We include them manually with a version query parameter.
 // =============================================================================
 
-$version = @file_get_contents(dirname(__FILE__) . '/VERSION') ?: 'unknown';
+$version = trim(@file_get_contents(dirname(__FILE__) . '/VERSION') ?: 'unknown');
+$vEnc = htmlspecialchars($version, ENT_QUOTES, 'UTF-8');
+$pluginName = 'fpp-listener-sync';
 ?>
 
-<!-- Tab Navigation -->
-<ul class="nav nav-tabs" id="listenerTabs" role="tablist">
-    <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="status-tab" data-bs-toggle="tab" data-bs-target="#statusPanel"
-            type="button" role="tab">Status</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="config-tab" data-bs-toggle="tab" data-bs-target="#configPanel"
-            type="button" role="tab">AP Configuration</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="clients-tab" data-bs-toggle="tab" data-bs-target="#clientsPanel"
-            type="button" role="tab">Connected Clients</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="logs-tab" data-bs-toggle="tab" data-bs-target="#logsPanel"
-            type="button" role="tab">Logs & Diagnostics</button>
-    </li>
-</ul>
+<!-- Cache-busted CSS/JS (served from static/, not js/ or css/) -->
+<link rel="stylesheet" href="plugin.php?plugin=<?= $pluginName ?>&file=static/dashboard.css&nopage=1&v=<?= $vEnc ?>">
+<script src="plugin.php?plugin=<?= $pluginName ?>&file=static/dashboard.js&nopage=1&v=<?= $vEnc ?>"></script>
 
-<div class="tab-content mt-3" id="listenerTabContent">
-
-    <!-- ====== STATUS TAB ====== -->
-    <div class="tab-pane fade show active" id="statusPanel" role="tabpanel">
-        <div class="row">
-            <div class="col-md-6">
-                <h3>Services</h3>
-                <table class="table table-sm">
-                    <tbody>
-                        <tr><td>Listener AP (hostapd)</td><td id="svc-listener-ap">--</td></tr>
-                        <tr><td>DNS/DHCP (dnsmasq)</td><td id="svc-dnsmasq">--</td></tr>
-                        <tr><td>WebSocket Sync (ws-sync)</td><td id="svc-ws-sync">--</td></tr>
-                        <tr><td>Firewall (nftables)</td><td id="svc-nftables">--</td></tr>
-                    </tbody>
-                </table>
-            </div>
-            <div class="col-md-6">
-                <h3>Current AP</h3>
-                <table class="table table-sm">
-                    <tbody>
-                        <tr><td>SSID</td><td id="cur-ssid">--</td></tr>
-                        <tr><td>Interface</td><td id="cur-iface">--</td></tr>
-                        <tr><td>Channel</td><td id="cur-channel">--</td></tr>
-                        <tr><td>IP Address</td><td id="cur-ip">--</td></tr>
-                        <tr><td>Connected Clients</td><td id="cur-clients">--</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <h3>Quick Links</h3>
-        <div class="mb-3">
-            <a id="link-listener" href="#" target="_blank" class="btn btn-outline-light btn-sm me-2">
-                <i class="fas fa-broadcast-tower"></i> Open Listener Page
-            </a>
-            <a href="networkconfig.php" class="btn btn-outline-light btn-sm me-2">
-                <i class="fas fa-network-wired"></i> FPP Network Settings
-            </a>
-            <a id="link-qrcode" href="#" target="_blank" class="btn btn-outline-light btn-sm me-2">
-                <i class="fas fa-qrcode"></i> QR Code
-            </a>
-            <a id="link-sign" href="#" target="_blank" class="btn btn-outline-light btn-sm">
-                <i class="fas fa-print"></i> Print Sign
-            </a>
-        </div>
-
-        <div class="text-muted">
-            FPP Phone Listener v<?php echo htmlspecialchars($version); ?>
-        </div>
+<!-- Page Header -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1><i class="fas fa-network-wired"></i> Network Configuration
+        <img src="/listen/logo.png" alt="" style="height:36px; vertical-align:middle; margin-left:12px;">
+        <small class="text-muted" style="font-size:0.4em; vertical-align:middle; margin-left:4px;">v<?= $vEnc ?></small>
+    </h1>
+    <div>
+        <a href="plugin.php?plugin=fpp-listener-sync&page=fpp-network.php" class="btn btn-outline-secondary btn-sm"
+           title="Open FPP's original network configuration page">
+            <i class="fas fa-cogs"></i> Advanced (FPP)
+        </a>
     </div>
+</div>
 
-    <!-- ====== AP CONFIGURATION TAB ====== -->
-    <div class="tab-pane fade" id="configPanel" role="tabpanel">
-        <h3>Access Point Settings</h3>
+<!-- Quick Links Bar -->
+<div class="mb-4">
+    <a id="link-listener" href="#" target="_blank" class="btn btn-outline-light btn-sm me-1">
+        <i class="fas fa-broadcast-tower"></i> Listener Page
+    </a>
+    <a id="link-qrcode" href="#" target="_blank" class="btn btn-outline-light btn-sm me-1">
+        <i class="fas fa-qrcode"></i> QR Code
+    </a>
+    <a id="link-sign" href="#" target="_blank" class="btn btn-outline-light btn-sm me-1">
+        <i class="fas fa-print"></i> Print Sign
+    </a>
+</div>
 
-        <div class="row mb-3">
-            <label class="col-md-3 col-form-label">WiFi Interface</label>
-            <div class="col-md-5">
-                <select id="cfg-iface" class="form-select">
-                    <option value="wlan1">wlan1 (USB adapter)</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="row mb-3">
-            <label class="col-md-3 col-form-label">Network Name (SSID)</label>
-            <div class="col-md-5">
-                <input type="text" id="cfg-ssid" class="form-control" maxlength="32" placeholder="SHOW_AUDIO">
-            </div>
-        </div>
-
-        <div class="row mb-3">
-            <label class="col-md-3 col-form-label">Password</label>
-            <div class="col-md-5">
-                <input type="password" id="cfg-password" class="form-control" maxlength="63"
-                    placeholder="Open (no password)">
-                <div class="form-text">Leave blank for an open network. 8-63 characters for WPA2.</div>
-            </div>
-        </div>
-
-        <div class="row mb-3">
-            <label class="col-md-3 col-form-label">Channel</label>
-            <div class="col-md-5">
-                <select id="cfg-channel" class="form-select">
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                    <option value="4">4</option>
-                    <option value="5">5</option>
-                    <option value="6" selected>6</option>
-                    <option value="7">7</option>
-                    <option value="8">8</option>
-                    <option value="9">9</option>
-                    <option value="10">10</option>
-                    <option value="11">11</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="row mb-3">
-            <label class="col-md-3 col-form-label">AP IP Address</label>
-            <div class="col-md-5">
-                <input type="text" id="cfg-ip" class="form-control" placeholder="192.168.50.1">
-                <div class="form-text">Changing the IP will update dnsmasq, nftables, captive portal, and .htaccess.</div>
-            </div>
-        </div>
-
-        <div class="row mb-3">
-            <div class="col-md-5 offset-md-3">
-                <button id="btn-save-config" class="btn btn-success">
-                    <i class="fas fa-save"></i> Save & Restart AP
-                </button>
-                <span id="save-status" class="ms-2"></span>
-            </div>
-        </div>
+<!-- Interface Cards Container (populated by JS) -->
+<div id="interface-cards" class="row g-3 mb-4">
+    <div class="col-12 text-center text-muted py-4">
+        <i class="fas fa-spinner fa-spin"></i> Detecting network interfaces...
     </div>
+</div>
 
-    <!-- ====== CONNECTED CLIENTS TAB ====== -->
-    <div class="tab-pane fade" id="clientsPanel" role="tabpanel">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h3 class="mb-0">Connected Clients</h3>
+<!-- Connected Clients Section (shown when a Listener interface exists) -->
+<div id="clients-section" class="mb-4" style="display:none;">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center"
+             data-bs-toggle="collapse" data-bs-target="#clients-collapse" role="button">
+            <h5 class="mb-0"><i class="fas fa-mobile-alt"></i> Connected Clients</h5>
             <div>
                 <label class="form-check-label me-2">
                     <input type="checkbox" id="auto-refresh-clients" class="form-check-input" checked>
                     Auto-refresh
                 </label>
                 <button id="btn-refresh-clients" class="btn btn-outline-light btn-sm">
-                    <i class="fas fa-sync-alt"></i> Refresh
+                    <i class="fas fa-sync-alt"></i>
                 </button>
             </div>
         </div>
-        <table class="table table-sm table-striped" id="clients-table">
-            <thead>
-                <tr>
-                    <th>MAC Address</th>
-                    <th>IP</th>
-                    <th>Hostname</th>
-                    <th>Signal</th>
-                    <th>Connected</th>
-                </tr>
-            </thead>
-            <tbody id="clients-tbody">
-                <tr><td colspan="5" class="text-muted">Loading...</td></tr>
-            </tbody>
-        </table>
+        <div id="clients-collapse" class="collapse show">
+            <div class="card-body p-0">
+                <table class="table table-sm table-striped mb-0">
+                    <thead>
+                        <tr>
+                            <th>MAC Address</th>
+                            <th>IP</th>
+                            <th>Hostname</th>
+                            <th>Signal</th>
+                            <th>Connected</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clients-tbody">
+                        <tr><td colspan="5" class="text-muted text-center">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
+</div>
 
-    <!-- ====== LOGS & DIAGNOSTICS TAB ====== -->
-    <div class="tab-pane fade" id="logsPanel" role="tabpanel">
-        <h3>Diagnostics</h3>
-        <div class="mb-3">
-            <button id="btn-selftest" class="btn btn-outline-light btn-sm">
-                <i class="fas fa-stethoscope"></i> Run Self-Test
+<!-- Logs & Diagnostics Section -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center"
+         data-bs-toggle="collapse" data-bs-target="#logs-collapse" role="button">
+        <h5 class="mb-0"><i class="fas fa-file-alt"></i> Logs & Diagnostics</h5>
+        <div>
+            <button id="btn-selftest" class="btn btn-outline-light btn-sm me-1">
+                <i class="fas fa-stethoscope"></i> Self-Test
             </button>
-            <button id="btn-restart-ap" class="btn btn-outline-warning btn-sm ms-2">
-                <i class="fas fa-redo"></i> Restart AP
+            <button id="btn-restart-ap" class="btn btn-outline-warning btn-sm me-1" title="Restart Listener AP">
+                <i class="fas fa-redo"></i> AP
             </button>
-            <button id="btn-restart-ws" class="btn btn-outline-warning btn-sm ms-2">
-                <i class="fas fa-redo"></i> Restart WS Sync
+            <button id="btn-restart-ws" class="btn btn-outline-warning btn-sm me-1" title="Restart WebSocket Sync">
+                <i class="fas fa-redo"></i> WS
             </button>
-            <button id="btn-restart-dns" class="btn btn-outline-warning btn-sm ms-2">
-                <i class="fas fa-redo"></i> Restart DNS/DHCP
+            <button id="btn-restart-dns" class="btn btn-outline-warning btn-sm" title="Restart DNS/DHCP">
+                <i class="fas fa-redo"></i> DNS
             </button>
         </div>
-        <div id="selftest-results" class="mb-3" style="display:none;"></div>
-
-        <h3>Service Logs</h3>
-        <div class="mb-2">
-            <select id="log-source" class="form-select d-inline-block" style="width:auto;">
-                <option value="ws-sync">WebSocket Sync</option>
-                <option value="listener-ap">Listener AP</option>
-                <option value="dnsmasq">DNS/DHCP</option>
-                <option value="sync">Sync Reports</option>
-            </select>
-            <select id="log-lines" class="form-select d-inline-block ms-1" style="width:auto;">
-                <option value="25">25 lines</option>
-                <option value="50" selected>50 lines</option>
-                <option value="100">100 lines</option>
-                <option value="200">200 lines</option>
-            </select>
-            <button id="btn-load-logs" class="btn btn-outline-light btn-sm ms-1">
-                <i class="fas fa-file-alt"></i> Load
-            </button>
-        </div>
-        <pre id="log-output" class="p-2" style="max-height:400px; overflow-y:auto; font-size:12px; background:#1a1a2e; color:#e0e0e0; border:1px solid #333; border-radius:4px;">Select a log source and click Load.</pre>
     </div>
-
+    <div id="logs-collapse" class="collapse">
+        <div class="card-body">
+            <div id="selftest-results" class="mb-3" style="display:none;"></div>
+            <div class="mb-2">
+                <select id="log-source" class="form-select d-inline-block" style="width:auto;">
+                    <option value="ws-sync">WebSocket Sync</option>
+                    <option value="listener-ap">Listener AP</option>
+                    <option value="dnsmasq">DNS/DHCP</option>
+                    <option value="sync">Sync Reports</option>
+                </select>
+                <select id="log-lines" class="form-select d-inline-block ms-1" style="width:auto;">
+                    <option value="25">25 lines</option>
+                    <option value="50" selected>50 lines</option>
+                    <option value="100">100 lines</option>
+                    <option value="200">200 lines</option>
+                </select>
+                <button id="btn-load-logs" class="btn btn-outline-light btn-sm ms-1">
+                    <i class="fas fa-download"></i> Load
+                </button>
+            </div>
+            <pre id="log-output" class="log-output">Select a log source and click Load.</pre>
+        </div>
+    </div>
 </div>

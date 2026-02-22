@@ -22,6 +22,7 @@ $listenSync = '/home/fpp/listen-sync';
 $pluginDir  = dirname(__FILE__);
 $configFile = $listenSync . '/ap.conf';
 $hostapdConf = $listenSync . '/hostapd-listener.conf';
+$rolesFile  = $listenSync . '/roles.json';
 
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
@@ -46,6 +47,18 @@ switch ($action) {
         break;
     case 'selftest':
         echo json_encode(runSelfTest());
+        break;
+    case 'get_interfaces':
+        echo json_encode(getAllInterfaces());
+        break;
+    case 'get_roles':
+        echo json_encode(getRoles());
+        break;
+    case 'save_role':
+        echo json_encode(saveRole());
+        break;
+    case 'fix_wifi':
+        echo json_encode(fixWifiConnect());
         break;
     default:
         echo json_encode(['success' => false, 'error' => 'Unknown action']);
@@ -388,6 +401,134 @@ function runSelfTest() {
 
     $allPass = count(array_filter($results, function($r) { return !$r['pass']; })) === 0;
     return ['success' => true, 'allPass' => $allPass, 'results' => $results];
+}
+
+// =============================================================================
+// Interface & Role Management
+// =============================================================================
+function getAllInterfaces() {
+    $roles = loadRoles();
+    $interfaces = [];
+
+    // Get all non-loopback interfaces from /sys/class/net
+    $sysNet = glob('/sys/class/net/*');
+    if (!$sysNet) return ['success' => true, 'interfaces' => []];
+
+    foreach ($sysNet as $path) {
+        $name = basename($path);
+        if ($name === 'lo') continue;
+
+        // Determine type
+        $isWireless = is_dir($path . '/wireless');
+        $type = 'ethernet';
+        if ($isWireless) {
+            $driver = @readlink($path . '/device/driver');
+            $driver = $driver ? basename($driver) : '';
+            // USB adapters typically have a different device path
+            $isUSB = (strpos(@readlink($path . '/device'), 'usb') !== false);
+            $type = $isUSB ? 'wifi-usb' : 'wifi';
+        }
+
+        // Get current state
+        $operstate = trim(@file_get_contents($path . '/operstate') ?: 'unknown');
+        $ip = trim(shell_exec("ip addr show $name 2>/dev/null | grep 'inet ' | awk '{print \$2}' | cut -d/ -f1") ?? '');
+        $mac = trim(@file_get_contents($path . '/address') ?: '');
+
+        // Friendly label
+        $label = $name;
+        if ($type === 'ethernet') $label = "$name (Ethernet)";
+        elseif ($type === 'wifi') $label = "$name (WiFi)";
+        elseif ($type === 'wifi-usb') $label = "$name (USB WiFi)";
+
+        $interfaces[] = [
+            'name'      => $name,
+            'type'      => $type,
+            'label'     => $label,
+            'operstate' => $operstate,
+            'ip'        => $ip,
+            'mac'       => $mac,
+            'role'      => $roles[$name] ?? '',
+            'wireless'  => $isWireless,
+        ];
+    }
+
+    return ['success' => true, 'interfaces' => $interfaces];
+}
+
+function getRoles() {
+    return ['success' => true, 'roles' => loadRoles()];
+}
+
+function saveRole() {
+    global $rolesFile;
+
+    $iface = $_POST['interface'] ?? '';
+    $role  = $_POST['role'] ?? '';
+
+    if (!preg_match('/^[a-z0-9]+$/', $iface)) {
+        return ['success' => false, 'error' => 'Invalid interface name'];
+    }
+
+    $validRoles = ['internet', 'show', 'listener', 'unused', ''];
+    if (!in_array($role, $validRoles)) {
+        return ['success' => false, 'error' => 'Invalid role'];
+    }
+
+    $roles = loadRoles();
+    if ($role === '' || $role === 'unused') {
+        unset($roles[$iface]);
+    } else {
+        $roles[$iface] = $role;
+    }
+
+    // Write roles file
+    $json = json_encode($roles, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    $tmp = tempnam('/tmp', 'roles_');
+    file_put_contents($tmp, $json . "\n");
+    exec("sudo /usr/bin/tee $rolesFile < $tmp > /dev/null 2>&1", $out, $ret);
+    unlink($tmp);
+
+    return ['success' => true, 'roles' => $roles];
+}
+
+function loadRoles() {
+    global $rolesFile;
+    if (!file_exists($rolesFile)) return [];
+    $json = @file_get_contents($rolesFile);
+    if (!$json) return [];
+    $roles = json_decode($json, true);
+    return is_array($roles) ? $roles : [];
+}
+
+// =============================================================================
+// WiFi Client Fix — disable ieee80211w after FPP apply
+// =============================================================================
+// FPP's fppinit generates wpa_supplicant configs with ieee80211w=1 (Protected
+// Management Frames). Many consumer APs don't support PMF, causing wpa_supplicant
+// to get stuck in SCANNING state. This function disables PMF and reassociates.
+function fixWifiConnect() {
+    $iface = $_POST['interface'] ?? '';
+    if (!preg_match('/^wlan[0-9]+$/', $iface)) {
+        return ['success' => false, 'error' => 'Invalid interface name'];
+    }
+
+    // Disable ieee80211w via wpa_cli and reassociate
+    $out1 = trim(shell_exec("sudo /usr/sbin/wpa_cli -i $iface set_network 0 ieee80211w 0 2>&1") ?? '');
+    $out2 = trim(shell_exec("sudo /usr/sbin/wpa_cli -i $iface reassociate 2>&1") ?? '');
+
+    // Wait a moment and check status
+    sleep(3);
+    $status = trim(shell_exec("sudo /usr/sbin/wpa_cli -i $iface status 2>&1") ?? '');
+    $state = '';
+    if (preg_match('/wpa_state=(\S+)/', $status, $m)) {
+        $state = $m[1];
+    }
+
+    return [
+        'success' => true,
+        'state' => $state,
+        'detail' => "ieee80211w=$out1, reassociate=$out2"
+    ];
 }
 
 // =============================================================================
