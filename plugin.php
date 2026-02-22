@@ -30,6 +30,9 @@ $pluginName = 'fpp-listener-sync';
         <small class="text-muted" style="font-size:0.4em; vertical-align:middle; margin-left:4px;">v<?= $vEnc ?></small>
     </h1>
     <div>
+        <button id="btn-help" class="btn btn-outline-info btn-sm me-1" title="About FPP Phone Listener">
+            <i class="fas fa-question-circle"></i> Help
+        </button>
         <a href="/networkconfig-original.php" class="btn btn-outline-secondary btn-sm"
            title="Open FPP's original network configuration page">
             <i class="fas fa-cogs"></i> Advanced (FPP)
@@ -138,6 +141,31 @@ $pluginName = 'fpp-listener-sync';
                 </button>
             </div>
             <pre id="log-output" class="log-output">Select a log source and click Load.</pre>
+        </div>
+    </div>
+</div>
+
+<!-- Help/About Modal -->
+<div class="modal fade" id="helpModal" tabindex="-1" aria-labelledby="helpModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content bg-dark text-light">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="helpModalLabel">
+                    <i class="fas fa-question-circle"></i> FPP Phone Listener — Help
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="help-content" style="font-size:0.9rem;">
+                <div class="text-center text-muted py-4">
+                    <i class="fas fa-spinner fa-spin"></i> Loading...
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <a href="https://github.com/UndocEng/fpp-listener-sync" target="_blank" class="btn btn-outline-info btn-sm me-auto">
+                    <i class="fab fa-github"></i> GitHub
+                </a>
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+            </div>
         </div>
     </div>
 </div>

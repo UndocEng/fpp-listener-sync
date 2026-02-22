@@ -856,4 +856,149 @@ $(document).ready(function() {
     $('#btn-restart-ap').on('click', function() { restartServiceBtn('listener-ap'); });
     $('#btn-restart-ws').on('click', function() { restartServiceBtn('ws-sync'); });
     $('#btn-restart-dns').on('click', function() { restartServiceBtn('dnsmasq'); });
+
+    // Help button
+    $('#btn-help').on('click', showHelp);
 });
+
+// =============================================================================
+// Help / README display
+// =============================================================================
+function showHelp() {
+    var modal = new bootstrap.Modal(document.getElementById('helpModal'));
+    modal.show();
+    pluginAPI('get_readme', null, function(res) {
+        if (res.success) {
+            $('#help-content').html(renderMarkdown(res.content));
+        } else {
+            $('#help-content').html('<p class="text-danger">Could not load README.</p>');
+        }
+    });
+}
+
+// Minimal markdown-to-HTML renderer (handles headers, bold, italic, links,
+// code blocks, inline code, tables, lists, blockquotes, horizontal rules)
+function renderMarkdown(md) {
+    var html = '';
+    var lines = md.split('\n');
+    var inCode = false, inTable = false, inList = false, listType = '';
+    var codeBlock = '';
+
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+
+        // Fenced code blocks
+        if (line.match(/^```/)) {
+            if (inCode) {
+                html += '<pre class="bg-black text-light p-2 rounded" style="font-size:0.85em;">' + escHtml(codeBlock) + '</pre>';
+                codeBlock = '';
+                inCode = false;
+            } else {
+                if (inList) { html += '</' + listType + '>'; inList = false; }
+                if (inTable) { html += '</tbody></table>'; inTable = false; }
+                inCode = true;
+            }
+            continue;
+        }
+        if (inCode) { codeBlock += (codeBlock ? '\n' : '') + line; continue; }
+
+        // Close list if non-list line
+        if (inList && !line.match(/^(\s*[-*]\s|^\s*\d+\.\s)/)) {
+            html += '</' + listType + '>'; inList = false;
+        }
+
+        // Close table if non-table line
+        if (inTable && !line.match(/^\|/)) {
+            html += '</tbody></table>'; inTable = false;
+        }
+
+        // Blank line
+        if (line.trim() === '') { continue; }
+
+        // Headers
+        if (line.match(/^#{1,6}\s/)) {
+            var level = line.match(/^(#{1,6})/)[1].length;
+            var text = inlineFormat(line.replace(/^#{1,6}\s+/, ''));
+            html += '<h' + level + ' class="mt-3 mb-2">' + text + '</h' + level + '>';
+            continue;
+        }
+
+        // Horizontal rule
+        if (line.match(/^(-{3,}|\*{3,}|_{3,})\s*$/)) {
+            html += '<hr>';
+            continue;
+        }
+
+        // Blockquote
+        if (line.match(/^>\s/)) {
+            html += '<blockquote class="border-start border-info ps-3 text-muted">' + inlineFormat(line.replace(/^>\s+/, '')) + '</blockquote>';
+            continue;
+        }
+
+        // Table
+        if (line.match(/^\|/)) {
+            var cells = line.split('|').filter(function(c) { return c.trim() !== ''; });
+            if (cells[0] && cells[0].match(/^[\s-:]+$/)) { continue; } // separator row
+            if (!inTable) {
+                inTable = true;
+                html += '<table class="table table-sm table-dark table-bordered" style="font-size:0.85em;"><tbody>';
+                var isHeader = (i + 1 < lines.length && lines[i + 1].match(/^\|[\s-:|]+\|/));
+                var tag = isHeader ? 'th' : 'td';
+                html += '<tr>';
+                cells.forEach(function(c) { html += '<' + tag + '>' + inlineFormat(c.trim()) + '</' + tag + '>'; });
+                html += '</tr>';
+            } else {
+                html += '<tr>';
+                cells.forEach(function(c) { html += '<td>' + inlineFormat(c.trim()) + '</td>'; });
+                html += '</tr>';
+            }
+            continue;
+        }
+
+        // Unordered list
+        if (line.match(/^\s*[-*]\s/)) {
+            if (!inList || listType !== 'ul') {
+                if (inList) html += '</' + listType + '>';
+                html += '<ul>'; inList = true; listType = 'ul';
+            }
+            html += '<li>' + inlineFormat(line.replace(/^\s*[-*]\s+/, '')) + '</li>';
+            continue;
+        }
+
+        // Ordered list
+        if (line.match(/^\s*\d+\.\s/)) {
+            if (!inList || listType !== 'ol') {
+                if (inList) html += '</' + listType + '>';
+                html += '<ol>'; inList = true; listType = 'ol';
+            }
+            html += '<li>' + inlineFormat(line.replace(/^\s*\d+\.\s+/, '')) + '</li>';
+            continue;
+        }
+
+        // Paragraph
+        html += '<p>' + inlineFormat(line) + '</p>';
+    }
+
+    if (inList) html += '</' + listType + '>';
+    if (inTable) html += '</tbody></table>';
+    if (inCode) html += '<pre class="bg-black text-light p-2 rounded">' + escHtml(codeBlock) + '</pre>';
+    return html;
+}
+
+// Inline formatting: bold, italic, code, links, images
+function inlineFormat(text) {
+    text = escHtml(text);
+    // Images: ![alt](url)
+    text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;">');
+    // Links: [text](url)
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-info">$1</a>');
+    // Bold+italic: ***text***
+    text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+    // Bold: **text**
+    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic: *text*
+    text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Inline code: `text`
+    text = text.replace(/`([^`]+)`/g, '<code class="text-info">$1</code>');
+    return text;
+}

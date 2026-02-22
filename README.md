@@ -16,23 +16,30 @@ Visitors connect to an open Wi-Fi AP, open a URL, and hear show audio synced to 
 5. A WebSocket connection to the Pi keeps the audio synced to FPP's current position
 6. No app install required — works in Safari, Chrome, Firefox on any phone
 
- 
+## What Visitors See
+
+When visitors join the **SHOW_AUDIO** Wi-Fi network:
+
+1. **Captive portal popup** — Opens automatically on most phones ("Sign in to Wi-Fi network")
+2. **Listener page** — Shows the current track name, a play button, and sync status
+3. **Enable Audio** — One tap starts synced audio playback
+
+The listener page is at `http://192.168.50.1/listen/` (or `http://listen.local/listen/`).
+
+### QR Code & Print Sign
+
+The plugin includes two ready-made pages for directing visitors:
+
+- **QR Code Generator** (`/qrcode.html`) — Generates a Wi-Fi QR code that phones can scan to auto-join the SHOW_AUDIO network. Download and print it.
+- **Print Sign** (`/print-sign.html`) — A printable instruction card with the QR code and step-by-step directions for visitors. Includes a fallback instruction to open `192.168.50.1` in the browser if the captive portal doesn't appear.
+
+Links to both are available in the **Network Dashboard** quick links bar at the top of the admin page.
+
 ## Support This Project
 
-If this tool saved you time or made your show better, consider buying me a coffee or donate for me to get more tokkens:
+If this tool saved you time or made your show better, consider buying me a coffee:
 
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://www.paypal.com/ncp/payment/Y66WZAYUA5ED6)
-
-<!--
-For non-GitHub pages that support scripts, use the hosted button:
-<div id="paypal-container-Y66WZAYUA5ED6"></div>
-<script>
-  paypal.HostedButtons({
-    hostedButtonId: "Y66WZAYUA5ED6",
-  }).render("#paypal-container-Y66WZAYUA5ED6")
-</script>
--->
-
 
 ## Important
 
@@ -100,6 +107,7 @@ The installer will automatically:
 - Set up the `SHOW_AUDIO` Wi-Fi network on your USB adapter
 - Configure the captive portal so phones open the page automatically
 - Deploy the web files and WebSocket sync server
+- Replace FPP's Network Configuration page with the plugin's Network Dashboard
 - Start all services
 - Run a self-test to make sure everything is working
 
@@ -126,6 +134,34 @@ If the names don't match, visitors won't hear any audio for that sequence.
 3. A captive portal page should pop up automatically. If it doesn't, open your browser and go to `192.168.50.1/listen/`
 4. Tap **Enable Audio**
 5. You should hear the music synced to your show!
+
+## Network Dashboard
+
+After installation, the plugin replaces FPP's **Status/Control > Network** page with a card-based Network Dashboard. Each detected network interface gets its own card.
+
+### Interface Roles
+
+Each interface card has a **Role** dropdown:
+
+| Role | What It Does | Configured Via |
+|------|-------------|----------------|
+| **Internet / Management** | Wired/WiFi connection to your home network. DHCP or static IP. | FPP's built-in network API |
+| **Show Network** | WiFi client for your show control network. SSID, password, IP settings. | FPP's built-in network API |
+| **Listener Network (AP)** | Creates the SHOW_AUDIO hotspot for visitor phones. Manages hostapd, dnsmasq, firewall. | Plugin's listener API |
+| **Unused** | Interface not in use. | Plugin's listener API |
+
+### Dashboard Features
+
+- **Quick Links** — Listener Page, QR Code Generator, Print Sign (top of page)
+- **Interface Cards** — One card per detected interface with role-specific settings
+- **Connected Clients** — Table showing phones connected to the Listener network (MAC, IP, hostname, signal strength)
+- **Logs & Diagnostics** — View logs from WebSocket Sync, Listener AP, DNS/DHCP, or Sync Reports. Load, clear, and select line count.
+- **Self-Test** — One-click health check of all services
+- **Service Restart** — Quick restart buttons for AP, WebSocket, and DNS services
+- **Tether Status** — Shows FPP's tethering configuration on the relevant WiFi card with a link to Tether Settings
+- **Subnet Conflict Detection** — Warns if the Listener AP subnet overlaps another interface
+- **Network Isolation Warning** — Reminds you that the Listener network is isolated (no forwarding)
+- **Advanced (FPP)** — Link to FPP's original network configuration page
 
 ## How the Sync Works
 
@@ -168,7 +204,7 @@ A **hard seek** is only performed if error exceeds 2 seconds (e.g., after a long
 - **Clock-aware sync**: The `serverOk` check uses the measured clock offset when available, so sync works even if the Pi's clock is wrong (common on standalone APs with no NTP)
 - **Stale message handling**: Messages older than 2 seconds are discarded rather than clamped, preventing wrong-direction PLL corrections
 
-## Measured Performance (v2.3.5)
+## Measured Performance
 
 Real-world sync log data from a Samsung S21 on the SHOW_AUDIO network, measured across 5 track sessions (~11 minutes total, 564 steady-state samples):
 
@@ -200,6 +236,39 @@ Initial MP3 seek error is typically 250-310ms (MP3 keyframe granularity). The PL
 - **Playback rate stays within 0.7% of normal** (0.9977–1.0049) — completely inaudible
 - **Clock offset stable within 4ms** — consistent network latency estimation
 
+## Using on Remote FPPs
+
+This plugin works on **both Master and Remote** FPPs!
+
+### Master FPP
+- Reads its own playback status directly
+- Serves synced audio to visitors
+
+### Remote FPP
+- **Auto-discovers the master** — the WebSocket server detects FPP remote mode (mode=8) and automatically finds and polls the master FPP for playback position
+- Serves audio from its own local files
+- Each remote creates its own `SHOW_AUDIO` network
+- Visitors can connect to the nearest FPP
+
+### Requirements for Remotes
+- USB Wi-Fi adapter (wlan1)
+- **Audio files must be present locally** in `/home/fpp/media/music/`
+- Audio filenames must match sequence names (e.g., `MySong.fseq` → `MySong.mp3`)
+- Same installation process as master
+- The master FPP must be reachable on the network (the remote auto-discovers it via FPP's multiSync API)
+
+### Multi-FPP Setup Options
+
+**Option 1: All FPPs have listener-sync**
+- Each FPP broadcasts its own `SHOW_AUDIO` network
+- Visitors connect to closest FPP
+- Good for large displays with spread-out visitors
+
+**Option 2: Only Master has listener-sync**
+- Single `SHOW_AUDIO` network
+- All visitors connect to master
+- Good for smaller displays
+
 ## Updating to a New Version
 
 ### Quick Update
@@ -221,7 +290,25 @@ sudo ./install.sh
 
 ### Check Your Version
 
-The version number is shown at the bottom of the listening page: `http://192.168.50.1/listen/`
+The version number is shown in the Network Dashboard page header (next to the logo) and at the bottom of the listener page.
+
+## Visitor Instructions
+
+### Option 1: QR Code (Easiest!)
+
+1. Print the QR code from the **Print Sign** page (link in dashboard quick links)
+2. Visitors scan the QR code with their phone camera
+3. Phone auto-joins **SHOW_AUDIO** Wi-Fi
+4. Captive portal popup opens the listener page
+5. Tap **Enable Audio**
+
+### Option 2: Manual Connection
+
+1. On your phone, go to Wi-Fi settings
+2. Join the network called **SHOW_AUDIO** (no password)
+3. A page should pop up automatically. If not, open your browser and go to `192.168.50.1/listen/`
+4. Tap **Enable Audio**
+5. Audio plays synced to the show!
 
 ## Debug Panel and Logging
 
@@ -256,6 +343,8 @@ When **Server Log** is checked on any client, that client sends sync reports to 
 cat /home/fpp/listen-sync/sync.log
 ```
 
+Or use the **Logs & Diagnostics** section in the Network Dashboard — select "Sync Reports" and click **Load**.
+
 The log format is:
 ```
 timestamp [client_ip] EVENT fpp=X target=Y local=Z err=Nms avg2s=Nms rate=R eff=E offset=Oms
@@ -287,11 +376,7 @@ The sync log **will not fill up your Pi's memory card**:
 - **5MB size limit**: If the log somehow reaches 5MB, it's rotated (old log renamed to `.log.old`)
 - **Log location**: `/home/fpp/listen-sync/sync.log`
 - **Only when enabled**: Logs are only written when at least one client has the "Server Log" checkbox checked
-
-To clear the log manually:
-```bash
-rm /home/fpp/listen-sync/sync.log
-```
+- **Clear from dashboard**: Use the **Clear** button in Logs & Diagnostics to clear any log source
 
 ### WebSocket Server Log
 
@@ -301,7 +386,7 @@ If you need to debug the WebSocket server itself:
 sudo journalctl -u ws-sync -f
 ```
 
-This shows the Python WebSocket server's output in real-time. Press `Ctrl+C` to stop watching.
+Or select "WebSocket Sync" in the dashboard Logs & Diagnostics section.
 
 ## Network Security
 
@@ -355,79 +440,23 @@ FPP's Apache config sets `ExpiresDefault "access plus 1 year"` for all responses
 | What | Path |
 |------|------|
 | Git repo | `/home/fpp/fpp-listener-sync/` |
+| Plugin directory (FPP) | `/home/fpp/media/plugins/fpp-listener-sync/` |
 | Web files (served by Apache) | `/home/fpp/media/www/listen/` |
 | Apache symlink | `/opt/fpp/www/listen` → `/home/fpp/media/www/listen/` |
 | Music files | `/home/fpp/media/music/` |
 | WebSocket server script | `/home/fpp/listen-sync/ws-sync-server.py` |
 | Sync log file | `/home/fpp/listen-sync/sync.log` |
+| Interface roles | `/home/fpp/listen-sync/roles.json` |
 | hostapd config | `/home/fpp/listen-sync/hostapd-listener.conf` |
 | dnsmasq config | `/etc/dnsmasq.conf` |
 | nftables firewall | Applied at runtime by `install.sh` (not persisted to file) |
 | Apache captive portal | `/opt/fpp/www/.htaccess` |
+| Apache listener config | `/etc/apache2/conf-available/listener.conf` |
 | Wi-Fi AP service | `/etc/systemd/system/listener-ap.service` |
 | WebSocket service | `/etc/systemd/system/ws-sync.service` |
 | wlan1 setup service | `/etc/systemd/system/wlan1-setup.service` |
-
-## Using on Remote FPPs
-
-This plugin works on **both Master and Remote** FPPs!
-
-### Master FPP
-- Reads its own playback status
-- Serves synced audio to visitors
-
-### Remote FPP
-- Also works! Reads its sync status from master
-- Serves audio from its own local files
-- Each remote creates its own `SHOW_AUDIO` network
-- Visitors can connect to the nearest FPP
-
-### Requirements for Remotes
-- USB Wi-Fi adapter (wlan1)
-- **Audio files must be present locally** in `/home/fpp/media/music/`
-- Audio filenames must match sequence names (e.g., `MySong.fseq` → `MySong.mp3`)
-- Same installation process as master
-
-### Multi-FPP Setup Options
-
-**Option 1: All FPPs have listener-sync**
-- Each FPP broadcasts its own `SHOW_AUDIO` network
-- Visitors connect to closest FPP
-- Good for large displays with spread-out visitors
-
-**Option 2: Only Master has listener-sync**
-- Single `SHOW_AUDIO` network
-- All visitors connect to master
-- Good for smaller displays
-
-## Visitor Instructions
-
-### Option 1: QR Code (Easiest!)
-
-1. Scan the QR code (generate at `http://192.168.50.1/qrcode.html`)
-2. Tap to join **SHOW_AUDIO** Wi-Fi
-3. Tap the captive portal popup
-4. Tap **Enable Audio**
-
-### Option 2: Manual Connection
-
-1. On your phone, go to Wi-Fi settings
-2. Join the network called **SHOW_AUDIO** (no password)
-3. A page should pop up automatically. If not, open your browser and go to `192.168.50.1/listen/`
-4. Tap **Enable Audio**
-5. Audio plays synced to the show!
-
-## QR Code Setup
-
-After installation, generate a Wi-Fi QR code for easy visitor access:
-
-1. Connect to the `SHOW_AUDIO` Wi-Fi network (or access via your home network)
-2. Open `http://192.168.50.1/qrcode.html` on your phone or computer
-3. Click **Generate QR Code**
-4. Click **Download QR Code**
-5. Print and display the QR code at your show entrance
-
-Visitors simply scan the code to automatically join the Wi-Fi and access the audio page!
+| Sudoers (admin API) | `/etc/sudoers.d/fpp-listener` |
+| Original network page | `/opt/fpp/www/networkconfig-original.php` |
 
 ## Uninstall
 
@@ -436,20 +465,44 @@ cd /home/fpp/fpp-listener-sync
 sudo ./uninstall.sh
 ```
 
+This will:
+- Stop and remove all services (ws-sync, listener-ap, wlan1-setup)
+- Remove the nftables firewall rules
+- Restore FPP's original `networkconfig.php` page
+- Restore the original `dnsmasq.conf` and Apache config
+- Remove web files and Apache symlinks
+- Remove sudoers permissions
+- Bring down wlan1
+
+FPP's network interface settings are **not** touched — they survive uninstall. A reboot is recommended after uninstalling.
+
 ## Troubleshooting
 
 ### Common Issues
 
 | Problem | What to Check |
 |---------|---------------|
-| **SHOW_AUDIO Wi-Fi not visible** | Is the USB Wi-Fi adapter plugged in? Run: `sudo systemctl status listener-ap` |
-| **Phone won't get an IP address** | Run: `sudo systemctl status dnsmasq` |
+| **SHOW_AUDIO Wi-Fi not visible** | Is the USB Wi-Fi adapter plugged in? Check Self-Test in dashboard, or run: `sudo systemctl status listener-ap` |
+| **Phone won't get an IP address** | Check Self-Test, or run: `sudo systemctl status dnsmasq` |
 | **No audio playing** | Did you tap "Enable Audio"? Check iPhone ringer switch. Check that MP3 filename matches sequence name. |
 | **Audio not syncing** | Enable Debug checkbox — is the WebSocket connected? Check Transport field shows `ws`. |
+| **Audio loops 1-2 seconds (remote FPP)** | The remote may not be discovering the master. Check ws-sync logs for "Remote mode: polling master" message. |
 | **Captive portal not appearing** | Try manually going to `192.168.50.1/listen/` in your browser |
-| **WebSocket not connecting** | Run: `sudo systemctl status ws-sync` and check it's running |
-| **Can access FPP admin from SHOW_AUDIO** | Firewall not applied. Re-run `sudo ./install.sh` — check for `nftables: wlan1 firewall active` in self-test |
+| **WebSocket not connecting** | Check Self-Test, or run: `sudo systemctl status ws-sync` |
+| **Can access FPP admin from SHOW_AUDIO** | Firewall not applied. Re-run `sudo ./install.sh` — check for `nftables: active` in self-test |
 | **Version not updating after deploy** | Hard-refresh the page (pull down to refresh on phone, Ctrl+Shift+R on PC) |
+| **Network page shows old FPP page** | Re-run `sudo ./install.sh` to re-apply the network page redirect |
+
+### Using the Dashboard Self-Test
+
+The easiest way to diagnose issues is to click the **Self-Test** button in the Logs & Diagnostics section of the Network Dashboard. It checks:
+
+- Service status (listener-ap, dnsmasq, ws-sync)
+- wlan1 IP address (if USB WiFi is present)
+- nftables firewall
+- WebSocket port 8080
+- HTTP listener page
+- status.php endpoint
 
 ### Checking Service Status
 
@@ -477,6 +530,18 @@ The installer is safe to run multiple times — it will restart everything and r
 
 ## Changelog
 
+### v2.7.x — Network Dashboard
+- **Network Dashboard**: Card-based admin UI replaces FPP's network configuration page
+- **Interface roles**: Internet/Management, Show Network, Listener Network (AP), Unused
+- **Connected Clients**: Live table of phones on the Listener network
+- **Logs & Diagnostics**: View and clear logs from dashboard, self-test button
+- **Remote FPP auto-discovery**: WebSocket server detects remote mode and auto-polls master FPP
+- **Tether status display**: Shows FPP tethering config on the relevant WiFi card
+- **Subnet conflict detection**: Warns if Listener AP subnet overlaps other interfaces
+- **Network isolation warnings**: Info banner on Listener cards explaining isolation
+- **Self-test improvements**: Skips listener-ap/wlan1 checks when USB WiFi not present
+- **Plugin directory sync**: Install script now keeps plugin directory in sync with repo
+
 ### v2.5.0
 - **Renamed to FPP Phone Listener** (was FPP Listener Sync) to clarify role as the audience-facing component alongside FPP Admin Eavesdrop
 - **Sync fix: removed elapsed clamp** — previously capped at 300ms which caused wrong-direction PLL corrections when messages were delayed 300-2000ms. Now discards messages >2s stale with no upper clamp, using true elapsed for accurate target position
@@ -498,51 +563,21 @@ The installer is safe to run multiple times — it will restart everything and r
 - Print sign includes fallback instruction ("go to 192.168.50.1")
 - Tested on FPP v9.4, Samsung S24 Ultra (Android 16), Samsung S21 (Android 15)
 
-### v2.3.5
-- Updated all version references, README documentation, LICENSE formatting
-- Added network security section to README
-- Cleaned up stale file references
+### v2.3.x
+- Network isolation: nftables firewall, IP forwarding disabled
+- Removed Avahi mDNS (broke Android DNS fallback)
+- listen.local works via dnsmasq wildcard DNS
 
-### v2.3.4
-- **Security fix**: Added nftables firewall to isolate wlan1 (replaces iptables which was not installed on Bookworm)
-- Added `dhcp-option=3` (no gateway) to prevent phones from routing to other subnets
-- Phones on SHOW_AUDIO can no longer access FPP admin UI, SSH, or other Pi IPs
-
-### v2.3.3
-- Removed listen-mdns service (Avahi mDNS broke Android DNS fallback for listen.local)
-- listen.local now works correctly via dnsmasq wildcard DNS
-
-### v2.3.2
-- Added listen-mdns service for mDNS (reverted in v2.3.3 — caused issues)
-
-### v2.3.1
-- Added verbose comments to all code files
-
-### v2.3.0
-- README and documentation overhaul
-- Log management documented
-
-### v2.2.18
-- Tightened baseRate calibration clamp from ±5% to ±1%
-
-### v2.2.17
-- Tightened PLL convergence: dead zone 20→5ms, rate interval 2s→1s in steady state
-
-### v2.2.16
-- Switched PLL error input from instantaneous error to 2-second rolling average (avg2s)
-
-### v2.2.14–v2.2.15
-- Adaptive Kp gain (scales with error magnitude)
-- Removed snap-seek at PLL lock (caused overshoot from MP3 keyframe inaccuracy)
-
-### v2.2.0–v2.2.13
+### v2.2.x — Adaptive PLL Sync
 - Replaced 5-second hard-seek check with continuous PLL rate correction
-- Iterative PLL tuning across many test sessions
+- Adaptive Kp gain, log-compressed corrections, dead zone
+- Switched PLL error input to 2-second rolling average (avg2s)
+- BaseRate calibration clamp ±1%
 
-### v2.1.0–v2.1.5
-- Scheduled-start sync with play-ahead latency compensation
-- Three debug checkboxes (Debug, Client Log, Server Log) — all off by default
-- Switched to `milliseconds_elapsed` from FPP API for real ms precision
+### v2.1.x — Scheduled Start Sync
+- Seek-ahead + play-ahead latency compensation
+- Three debug checkboxes (Debug, Client Log, Server Log)
+- Switched to `milliseconds_elapsed` from FPP API
 
 ### v2.0.0
 - Log-only mode with CSV export for analysis

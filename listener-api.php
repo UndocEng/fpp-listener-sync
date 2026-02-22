@@ -63,6 +63,15 @@ switch ($action) {
     case 'fix_wifi':
         echo json_encode(fixWifiConnect());
         break;
+    case 'get_readme':
+        $readmePath = dirname(__FILE__) . '/README.md';
+        if (!file_exists($readmePath)) {
+            // Try the git repo location
+            $readmePath = '/home/fpp/fpp-listener-sync/README.md';
+        }
+        $content = @file_get_contents($readmePath) ?: '(README.md not found)';
+        echo json_encode(['success' => true, 'content' => $content]);
+        break;
     default:
         echo json_encode(['success' => false, 'error' => 'Unknown action']);
 }
