@@ -79,6 +79,7 @@ function loadDashboard() {
                     });
                 }
                 renderCards(currentInterfaces, currentRoles, currentFppMap);
+                loadTetherStatus();
             });
         });
     });
@@ -314,30 +315,44 @@ function buildShowSettings(iface, fppData) {
 function buildTetherSection(iface) {
     if (!iface.wireless) return '';
 
-    var fppS = (typeof settings !== 'undefined') ? settings : {};
-    var tetherEnabled = fppS.EnableTethering;
-    var tetherIface = fppS.TetherInterface || '';
-    var tetherSsid = fppS.TetherSSID || 'FPP';
-
-    // Show global tether status — only on the tether interface's card (or first wireless if unset)
-    if (tetherIface && tetherIface !== iface.name) return '';
-
-    var modeLabel = 'Disabled';
-    if (tetherEnabled === '0') modeLabel = 'If no connection';
-    else if (tetherEnabled === '1') modeLabel = 'Always';
-
-    var statusText = tetherIface + ' / ' + modeLabel + ' / SSID: ' + escHtml(tetherSsid);
-
+    // Placeholder — populated by loadTetherStatus() after cards render
     var html = '<hr class="my-2">';
-    html += '<div class="row mb-2">';
+    html += '<div class="row mb-2 tether-row" data-iface="' + iface.name + '" style="display:none;">';
     html += '<label class="col-sm-3 col-form-label"><i class="fas fa-mobile-alt me-1"></i> Tether</label>';
     html += '<div class="col-sm-9 d-flex align-items-center justify-content-between">';
-    html += '<small class="text-muted">' + statusText + '</small>';
-    html += '<a href="/networkconfig-original.php" target="_blank" class="btn btn-outline-info btn-sm ms-2 text-nowrap">';
+    html += '<small class="text-muted tether-status">Loading...</small>';
+    html += '<a href="/networkconfig-original.php#tab-tethering" target="_blank" class="btn btn-outline-info btn-sm ms-2 text-nowrap">';
     html += '<i class="fas fa-cog"></i> Tether Settings</a>';
     html += '</div></div>';
 
     return html;
+}
+
+// Fetch tether settings from FPP API and show on the correct card
+function loadTetherStatus() {
+    $.when(
+        $.get('/api/settings/EnableTethering'),
+        $.get('/api/settings/TetherInterface'),
+        $.get('/api/settings/TetherSSID')
+    ).done(function(r1, r2, r3) {
+        var mode = String(r1[0]);
+        var iface = String(r2[0]);
+        var ssid = String(r3[0]) || 'FPP';
+
+        var modeLabel = 'Disabled';
+        if (mode === '0') modeLabel = 'If no connection';
+        else if (mode === '1') modeLabel = 'Always';
+
+        var statusText = iface + ' / ' + modeLabel + ' / SSID: ' + escHtml(ssid);
+
+        // Show only on the matching interface card
+        $('.tether-row').each(function() {
+            if ($(this).data('iface') === iface) {
+                $(this).find('.tether-status').html(statusText);
+                $(this).show();
+            }
+        });
+    });
 }
 
 // =============================================================================
