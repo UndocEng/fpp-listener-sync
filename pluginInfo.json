@@ -1,0 +1,18 @@
+{
+    "repoName": "fpp-listener-sync",
+    "name": "FPP Phone Listener",
+    "author": "UndocEng",
+    "description": "Synchronized audio for audience members via phone speakers. Creates a dedicated WiFi AP, captive portal, and WebSocket-based sync system.",
+    "homeURL": "https://github.com/UndocEng/fpp-listener-sync",
+    "srcURL": "https://github.com/UndocEng/fpp-listener-sync.git",
+    "bugURL": "https://github.com/UndocEng/fpp-listener-sync/issues",
+    "allowUpdates": 1,
+    "versions": [
+        {
+            "minFPPVersion": "9.0",
+            "maxFPPVersion": "0",
+            "branch": "main",
+            "sha": ""
+        }
+    ]
+}

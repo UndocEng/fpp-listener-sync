@@ -27,7 +27,8 @@
 # RULE ORDER (processed top to bottom, first match wins):
 #   1. Captive portal detection URLs → redirect to /listen/
 #   2. /listen/, /music/, /ws from show network → allow (pass through)
-#   3. Everything else from show network → redirect to /listen/
+#   3. Everything else from show network (by Host) → redirect to /listen/
+#   3b. Everything from show network (by client IP) → redirect to /listen/
 #   4. Admin IPs (localhost, fpp.local, LAN) → allow all (FPP web UI works)
 #   5. Wildcard domains (google.com, etc.) → redirect to /listen/
 #
@@ -78,6 +79,14 @@
     # gets redirected to /listen/. This protects FPP's admin interface.
     RewriteCond %{HTTP_HOST} ^192\.168\.50\.1(:[0-9]+)?$ [OR]
     RewriteCond %{HTTP_HOST} ^listen\.local(:[0-9]+)?$ [NC]
+    RewriteRule ^ /listen/ [R=302,L]
+
+    # --- Rule 3b: Block show network clients regardless of Host header ---
+    # Rules 2-3 check the Host header, but a wlan1 phone can use fpp.local
+    # (which dnsmasq resolves to 192.168.50.1) to bypass those Host checks.
+    # This rule catches ANY request from a 192.168.50.x client IP that wasn't
+    # already whitelisted by Rules 2a-c above.
+    RewriteCond %{REMOTE_ADDR} ^192\.168\.50\.
     RewriteRule ^ /listen/ [R=302,L]
 
     # --- Rule 4: Allow full access from admin/LAN networks ---

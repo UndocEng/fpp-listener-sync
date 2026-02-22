@@ -1,0 +1,35 @@
+/* =============================================================================
+ * listener-admin.css — FPP Phone Listener Admin Dashboard
+ * =============================================================================
+ * Minimal overrides for plugin pages. FPP's Bootstrap 5 theme handles most
+ * styling. This file only tweaks specifics for the listener admin.
+ * ============================================================================= */
+
+/* Client table MAC address styling */
+#clients-table code {
+    font-size: 0.85em;
+    color: #adb5bd;
+}
+
+/* Log output area */
+#log-output {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: 'Courier New', monospace;
+}
+
+/* Self-test results table */
+#selftest-results .table td {
+    padding: 0.25rem 0.5rem;
+    vertical-align: middle;
+}
+
+/* Status badge alignment in service table */
+#statusPanel .table td:last-child {
+    text-align: right;
+}
+
+/* Quick links button spacing */
+#statusPanel .btn {
+    margin-bottom: 4px;
+}

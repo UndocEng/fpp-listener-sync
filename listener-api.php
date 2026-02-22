@@ -1,0 +1,445 @@
+<?php
+// =============================================================================
+// listener-api.php — FPP Phone Listener Admin API
+// =============================================================================
+// Backend for the admin dashboard. Called via AJAX from listener-admin.js.
+// Served through FPP's plugin.php handler (nopage=1 mode).
+//
+// IMPORTANT: This file is NOT named api.php because FPP's API system
+// (index.php:addPluginEndpoints) auto-includes any plugin's api.php and
+// expects it to define a getEndpoints{name}() function. Having our standalone
+// API as api.php causes a PHP Fatal Error that breaks ALL FPP API calls.
+//
+// Security: .htaccess Rule 3b blocks all 192.168.50.x clients from accessing
+// plugin.php. This API is only reachable from LAN/localhost.
+// =============================================================================
+
+header('Content-Type: application/json');
+header('Cache-Control: no-store');
+
+// Config paths
+$listenSync = '/home/fpp/listen-sync';
+$pluginDir  = dirname(__FILE__);
+$configFile = $listenSync . '/ap.conf';
+$hostapdConf = $listenSync . '/hostapd-listener.conf';
+
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+
+switch ($action) {
+    case 'get_status':
+        echo json_encode(getStatus());
+        break;
+    case 'get_config':
+        echo json_encode(getConfig());
+        break;
+    case 'save_config':
+        echo json_encode(saveConfig());
+        break;
+    case 'get_clients':
+        echo json_encode(getClients());
+        break;
+    case 'get_logs':
+        echo json_encode(getLogs());
+        break;
+    case 'restart_service':
+        echo json_encode(restartService());
+        break;
+    case 'selftest':
+        echo json_encode(runSelfTest());
+        break;
+    default:
+        echo json_encode(['success' => false, 'error' => 'Unknown action']);
+}
+
+// =============================================================================
+// Status
+// =============================================================================
+function getStatus() {
+    $services = [
+        'listener-ap' => serviceStatus('listener-ap'),
+        'dnsmasq'     => serviceStatus('dnsmasq'),
+        'ws-sync'     => serviceStatus('ws-sync'),
+    ];
+
+    // Check nftables
+    $nft = trim(shell_exec('sudo /usr/sbin/nft list table inet listener_filter 2>/dev/null') ?? '');
+    $services['nftables'] = !empty($nft) ? 'active' : 'inactive';
+
+    // Get wlan1 IP
+    $wlanIP = trim(shell_exec("ip addr show wlan1 2>/dev/null | grep 'inet ' | awk '{print $2}'") ?? '');
+
+    // Current SSID from hostapd config
+    $ssid = getHostapdValue('ssid');
+    $channel = getHostapdValue('channel');
+    $iface = getHostapdValue('interface');
+
+    // Count connected clients from DHCP leases
+    $clientCount = 0;
+    $leases = @file('/var/lib/misc/dnsmasq.leases');
+    if ($leases) {
+        $clientCount = count(array_filter($leases, 'strlen'));
+    }
+
+    return [
+        'success'     => true,
+        'services'    => $services,
+        'wlanIP'      => $wlanIP,
+        'ssid'        => $ssid,
+        'channel'     => $channel,
+        'interface'   => $iface,
+        'clientCount' => $clientCount,
+    ];
+}
+
+// =============================================================================
+// Configuration
+// =============================================================================
+function getConfig() {
+    global $hostapdConf;
+
+    $config = [
+        'interface' => getHostapdValue('interface') ?: 'wlan1',
+        'ssid'      => getHostapdValue('ssid') ?: 'SHOW_AUDIO',
+        'channel'   => getHostapdValue('channel') ?: '6',
+        'wpa'       => getHostapdValue('wpa') ?: '0',
+    ];
+
+    // Detect AP IP from current interface
+    $iface = $config['interface'];
+    $ip = trim(shell_exec("ip addr show $iface 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1") ?? '');
+    $config['ap_ip'] = $ip ?: '192.168.50.1';
+
+    // Detect available wireless interfaces
+    $config['interfaces'] = getWirelessInterfaces();
+
+    return ['success' => true, 'config' => $config];
+}
+
+function saveConfig() {
+    global $hostapdConf, $listenSync, $pluginDir;
+
+    $iface   = $_POST['interface'] ?? 'wlan1';
+    $ssid    = $_POST['ssid'] ?? 'SHOW_AUDIO';
+    $channel = $_POST['channel'] ?? '6';
+    $password = $_POST['password'] ?? '';
+    $apIP    = $_POST['ap_ip'] ?? '192.168.50.1';
+
+    // Validate interface name (alphanumeric + numbers only)
+    if (!preg_match('/^wlan[0-9]+$/', $iface)) {
+        return ['success' => false, 'error' => 'Invalid interface name'];
+    }
+
+    // Validate SSID (1-32 chars, printable)
+    if (strlen($ssid) < 1 || strlen($ssid) > 32) {
+        return ['success' => false, 'error' => 'SSID must be 1-32 characters'];
+    }
+
+    // Validate channel
+    $ch = intval($channel);
+    if ($ch < 1 || $ch > 11) {
+        return ['success' => false, 'error' => 'Channel must be 1-11'];
+    }
+
+    // Validate password (empty = open, or 8-63 chars for WPA2)
+    if ($password !== '' && (strlen($password) < 8 || strlen($password) > 63)) {
+        return ['success' => false, 'error' => 'Password must be 8-63 characters (or empty for open network)'];
+    }
+
+    // Validate IP
+    if (!filter_var($apIP, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        return ['success' => false, 'error' => 'Invalid IP address'];
+    }
+
+    // Build hostapd config
+    $wpaBlock = '';
+    if ($password !== '') {
+        $wpaBlock = "wpa=2\nwpa_passphrase=$password\nwpa_key_mgmt=WPA-PSK\nwpa_pairwise=CCMP";
+    } else {
+        $wpaBlock = "wpa=0";
+    }
+
+    $hostapdContent = <<<CONF
+# hostapd-listener.conf — managed by FPP Phone Listener plugin
+interface=$iface
+driver=nl80211
+ssid=$ssid
+hw_mode=g
+channel=$ch
+country_code=US
+wmm_enabled=1
+ieee80211n=1
+auth_algs=1
+$wpaBlock
+ignore_broadcast_ssid=0
+ap_isolate=1
+CONF;
+
+    // Write hostapd config via temp file + sudo tee
+    $tmp = tempnam('/tmp', 'hostapd_');
+    file_put_contents($tmp, $hostapdContent . "\n");
+    exec("sudo /usr/bin/tee $hostapdConf < $tmp > /dev/null 2>&1", $out, $ret);
+    unlink($tmp);
+    if ($ret !== 0) {
+        return ['success' => false, 'error' => 'Failed to write hostapd config'];
+    }
+
+    // Build dnsmasq config with the (possibly new) AP IP
+    $ipParts = explode('.', $apIP);
+    $subnet = $ipParts[0] . '.' . $ipParts[1] . '.' . $ipParts[2];
+    $dhcpStart = $subnet . '.10';
+    $dhcpEnd   = $subnet . '.250';
+
+    $dnsmasqContent = <<<CONF
+# dnsmasq.conf — managed by FPP Phone Listener plugin
+interface=$iface
+bind-dynamic
+dhcp-range=$dhcpStart,$dhcpEnd,255.255.255.0,12h
+listen-address=$apIP
+dhcp-option=3,$apIP
+dhcp-option=6,$apIP
+dhcp-option=114,http://$apIP/listen/portal-api.php
+address=/listen.local/$apIP
+address=/#/$apIP
+log-dhcp
+CONF;
+
+    $tmp = tempnam('/tmp', 'dnsmasq_');
+    file_put_contents($tmp, $dnsmasqContent . "\n");
+    exec("sudo /usr/bin/tee /etc/dnsmasq.conf < $tmp > /dev/null 2>&1", $out, $ret);
+    unlink($tmp);
+
+    // Update .htaccess IP references if IP changed
+    $htaccess = '/opt/fpp/www/.htaccess';
+    if (file_exists($htaccess)) {
+        // Replace old IP pattern with new IP in .htaccess
+        exec("sudo /usr/bin/sed -i 's/192\\.168\\.50\\.1/$apIP/g' $htaccess 2>&1");
+        // Replace old subnet pattern (for REMOTE_ADDR check)
+        exec("sudo /usr/bin/sed -i 's/192\\\\\\.168\\\\\\.50\\\\\\./$subnet\\\\\\\\./g' $htaccess 2>&1");
+    }
+
+    // Update portal-api.php IP reference
+    $portalApi = '/home/fpp/media/www/listen/portal-api.php';
+    if (file_exists($portalApi)) {
+        exec("sudo /usr/bin/sed -i 's/192\\.168\\.50\\.1/$apIP/g' $portalApi 2>&1");
+    }
+
+    // Configure interface IP
+    exec("sudo /sbin/ip addr flush dev $iface 2>/dev/null");
+    exec("sudo /sbin/ip addr add $apIP/24 dev $iface 2>/dev/null");
+    exec("sudo /sbin/ip link set $iface up 2>/dev/null");
+
+    // Update nftables with new IP
+    updateNftables($iface, $apIP);
+
+    // Restart services
+    exec('sudo /usr/bin/systemctl restart dnsmasq 2>&1');
+    exec('sudo /usr/bin/systemctl restart listener-ap 2>&1');
+
+    $securityNote = $password !== '' ? "WPA2 ($ssid)" : "Open ($ssid)";
+    return ['success' => true, 'message' => "AP restarted: $securityNote on $iface ($apIP)"];
+}
+
+// =============================================================================
+// Connected Clients
+// =============================================================================
+function getClients() {
+    $clients = [];
+
+    // Parse DHCP leases: timestamp mac ip hostname client-id
+    $leases = @file('/var/lib/misc/dnsmasq.leases');
+    $leaseMap = [];
+    if ($leases) {
+        foreach ($leases as $line) {
+            $parts = preg_split('/\s+/', trim($line));
+            if (count($parts) >= 4) {
+                $leaseMap[strtolower($parts[1])] = [
+                    'mac'      => strtoupper($parts[1]),
+                    'ip'       => $parts[2],
+                    'hostname' => $parts[3] !== '*' ? $parts[3] : '',
+                    'expires'  => date('H:i:s', intval($parts[0])),
+                ];
+            }
+        }
+    }
+
+    // Get signal strength from hostapd
+    $iface = getHostapdValue('interface') ?: 'wlan1';
+    $staDump = shell_exec("sudo /usr/sbin/iw dev " . escapeshellarg($iface) . " station dump 2>/dev/null") ?? '';
+    $stations = [];
+    $currentMac = '';
+    foreach (explode("\n", $staDump) as $line) {
+        if (preg_match('/^Station\s+([0-9a-f:]+)/i', $line, $m)) {
+            $currentMac = strtolower($m[1]);
+            $stations[$currentMac] = ['signal' => '', 'connected' => ''];
+        } elseif ($currentMac) {
+            if (preg_match('/signal:\s+(-?\d+)\s+dBm/', $line, $m)) {
+                $stations[$currentMac]['signal'] = $m[1] . ' dBm';
+            }
+            if (preg_match('/connected time:\s+(\d+)\s+seconds/', $line, $m)) {
+                $secs = intval($m[1]);
+                $stations[$currentMac]['connected'] = sprintf('%02d:%02d:%02d', $secs / 3600, ($secs % 3600) / 60, $secs % 60);
+            }
+        }
+    }
+
+    // Merge lease data + station data
+    foreach ($leaseMap as $mac => $info) {
+        $signal = $stations[$mac]['signal'] ?? '';
+        $connected = $stations[$mac]['connected'] ?? '';
+        $clients[] = [
+            'mac'       => $info['mac'],
+            'ip'        => $info['ip'],
+            'hostname'  => $info['hostname'],
+            'signal'    => $signal,
+            'connected' => $connected,
+        ];
+    }
+
+    // Add stations not in leases (rare, but possible)
+    foreach ($stations as $mac => $info) {
+        if (!isset($leaseMap[$mac])) {
+            $clients[] = [
+                'mac'       => strtoupper($mac),
+                'ip'        => '',
+                'hostname'  => '',
+                'signal'    => $info['signal'],
+                'connected' => $info['connected'],
+            ];
+        }
+    }
+
+    return ['success' => true, 'clients' => $clients];
+}
+
+// =============================================================================
+// Logs
+// =============================================================================
+function getLogs() {
+    $source = $_POST['source'] ?? $_GET['source'] ?? 'ws-sync';
+    $lines  = intval($_POST['lines'] ?? $_GET['lines'] ?? 50);
+    $lines  = max(10, min($lines, 200));
+
+    $allowed = ['ws-sync', 'listener-ap', 'dnsmasq', 'hostapd', 'sync'];
+    if (!in_array($source, $allowed)) {
+        return ['success' => false, 'error' => 'Invalid log source'];
+    }
+
+    if ($source === 'sync') {
+        // Read sync.log file directly
+        $logFile = '/home/fpp/listen-sync/sync.log';
+        if (file_exists($logFile)) {
+            $output = shell_exec("tail -n $lines $logFile 2>&1") ?? '';
+        } else {
+            $output = '(no sync.log found)';
+        }
+    } else {
+        // Use journalctl for systemd services
+        $output = shell_exec("journalctl -u $source -n $lines --no-pager 2>&1") ?? '';
+    }
+
+    return ['success' => true, 'source' => $source, 'log' => $output];
+}
+
+// =============================================================================
+// Service Control
+// =============================================================================
+function restartService() {
+    $service = $_POST['service'] ?? '';
+    $allowed = ['listener-ap', 'dnsmasq', 'ws-sync'];
+    if (!in_array($service, $allowed)) {
+        return ['success' => false, 'error' => 'Invalid service name'];
+    }
+    exec("sudo /usr/bin/systemctl restart $service 2>&1", $out, $ret);
+    return ['success' => $ret === 0, 'message' => $ret === 0 ? "$service restarted" : "Failed to restart $service"];
+}
+
+// =============================================================================
+// Self-Test
+// =============================================================================
+function runSelfTest() {
+    $results = [];
+
+    // Service checks
+    foreach (['listener-ap', 'dnsmasq', 'ws-sync'] as $svc) {
+        $status = serviceStatus($svc);
+        $results[] = ['test' => "$svc service", 'pass' => $status === 'active', 'detail' => $status];
+    }
+
+    // wlan1 IP check
+    $iface = getHostapdValue('interface') ?: 'wlan1';
+    $ip = trim(shell_exec("ip addr show $iface 2>/dev/null | grep 'inet ' | awk '{print $2}'") ?? '');
+    $results[] = ['test' => "$iface IP", 'pass' => !empty($ip), 'detail' => $ip ?: 'no IP'];
+
+    // nftables check
+    $nft = trim(shell_exec('sudo /usr/sbin/nft list table inet listener_filter 2>/dev/null') ?? '');
+    $results[] = ['test' => 'nftables firewall', 'pass' => !empty($nft), 'detail' => !empty($nft) ? 'active' : 'inactive'];
+
+    // ws-sync port check
+    $wsHttp = trim(shell_exec("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ 2>/dev/null") ?? '');
+    $results[] = ['test' => 'ws-sync port 8080', 'pass' => $wsHttp === '426', 'detail' => "HTTP $wsHttp"];
+
+    // Apache /listen/ check
+    $http = trim(shell_exec("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/ 2>/dev/null") ?? '');
+    $results[] = ['test' => '/listen/ page', 'pass' => $http === '200', 'detail' => "HTTP $http"];
+
+    // status.php check
+    $http2 = trim(shell_exec("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/status.php 2>/dev/null") ?? '');
+    $results[] = ['test' => 'status.php', 'pass' => $http2 === '200', 'detail' => "HTTP $http2"];
+
+    $allPass = count(array_filter($results, function($r) { return !$r['pass']; })) === 0;
+    return ['success' => true, 'allPass' => $allPass, 'results' => $results];
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+function serviceStatus($name) {
+    $status = trim(shell_exec("systemctl is-active $name 2>/dev/null") ?? '');
+    return $status ?: 'unknown';
+}
+
+function getHostapdValue($key) {
+    global $hostapdConf;
+    if (!file_exists($hostapdConf)) return '';
+    $lines = file($hostapdConf);
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if (strpos($line, '#') === 0) continue;
+        if (preg_match('/^' . preg_quote($key, '/') . '\s*=\s*(.+)$/', $line, $m)) {
+            return trim($m[1]);
+        }
+    }
+    return '';
+}
+
+function getWirelessInterfaces() {
+    $interfaces = [];
+    $sysNet = glob('/sys/class/net/wlan*');
+    if ($sysNet) {
+        foreach ($sysNet as $path) {
+            $name = basename($path);
+            $driver = @readlink($path . '/device/driver');
+            $driver = $driver ? basename($driver) : 'unknown';
+            $interfaces[] = ['name' => $name, 'driver' => $driver];
+        }
+    }
+    return $interfaces;
+}
+
+function updateNftables($iface, $apIP) {
+    $nft = '/usr/sbin/nft';
+    if (!is_executable($nft)) return;
+
+    // Clear existing rules
+    exec("sudo $nft delete table inet listener_filter 2>/dev/null");
+
+    // Recreate with new IP
+    exec("sudo $nft add table inet listener_filter");
+    exec("sudo $nft add chain inet listener_filter wlan1_input '{ type filter hook input priority 0; policy accept; }'");
+    exec("sudo $nft add rule inet listener_filter wlan1_input iifname $iface udp dport '{67, 68}' accept");
+    exec("sudo $nft add rule inet listener_filter wlan1_input iifname $iface ip daddr $apIP udp dport 53 accept");
+    exec("sudo $nft add rule inet listener_filter wlan1_input iifname $iface ip daddr $apIP tcp dport 53 accept");
+    exec("sudo $nft add rule inet listener_filter wlan1_input iifname $iface ip daddr $apIP tcp dport '{80, 8080}' accept");
+    exec("sudo $nft add rule inet listener_filter wlan1_input iifname $iface meta l4proto tcp reject with tcp reset");
+    exec("sudo $nft add rule inet listener_filter wlan1_input iifname $iface reject");
+}
