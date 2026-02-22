@@ -333,24 +333,28 @@ function buildTetherSection(iface) {
     html += '<div class="row mb-2">';
     html += '<label class="col-sm-3 col-form-label"><i class="fas fa-mobile-alt me-1"></i> Tether</label>';
     html += '<div class="col-sm-9">';
-    html += '<div class="d-flex align-items-center">';
-    html += '<div class="form-check mb-0">';
-    html += '<input class="form-check-input tether-check" type="checkbox" id="tether-' + iface.name + '"';
-    html += ' data-iface="' + iface.name + '"' + (isChecked ? ' checked' : '') + '>';
-    html += '<label class="form-check-label" for="tether-' + iface.name + '">Enable Tether</label>';
-    html += '</div>';
-    html += '</div>';
+    // Top line: description text left, checkbox + label right
+    html += '<div class="d-flex align-items-center justify-content-between">';
+    html += '<small class="text-muted">';
     if (isChecked) {
-        html += '<small class="text-muted d-block mt-1">';
         html += 'Mode: ' + modeLabel + ' &bull; SSID: ' + escHtml(tetherSsid) + ' &bull; IP: 192.168.8.1';
-        html += '</small>';
     } else {
-        html += '<small class="text-muted d-block mt-1">Creates a hotspot if WiFi disconnects. Requires reboot.</small>';
+        html += 'Creates a hotspot if WiFi disconnects. Requires reboot.';
     }
-    html += '<div class="mt-1">';
-    html += '<a href="/networkconfig-original.php" target="_blank" class="btn btn-outline-info btn-sm">';
-    html += '<i class="fas fa-cog"></i> Tether Settings</a>';
+    html += '</small>';
+    html += '<div class="form-check mb-0 ms-2 text-nowrap">';
+    html += '<label class="form-check-label" for="tether-' + iface.name + '">Enable Tether</label>';
+    html += '<input class="form-check-input tether-check ms-2" type="checkbox" id="tether-' + iface.name + '"';
+    html += ' data-iface="' + iface.name + '"' + (isChecked ? ' checked' : '') + '>';
     html += '</div>';
+    html += '</div>';
+    // Tether Settings button below, aligned right (only when enabled)
+    if (isChecked) {
+        html += '<div class="text-end mt-1">';
+        html += '<a href="/networkconfig-original.php" target="_blank" class="btn btn-outline-info btn-sm">';
+        html += '<i class="fas fa-cog"></i> Tether Settings</a>';
+        html += '</div>';
+    }
     html += '</div></div>';
 
     return html;
