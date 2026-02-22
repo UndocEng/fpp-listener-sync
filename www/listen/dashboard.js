@@ -146,7 +146,8 @@ function buildCard(iface, role, fppData) {
     html += '<option value=""' + (role === '' ? ' selected' : '') + '>-- Select Role --</option>';
 
     // Only show appropriate roles based on interface type
-    html += '<option value="internet"' + (role === 'internet' ? ' selected' : '') + '>Internet / Management</option>';
+    var internetLabel = iface.wireless ? 'Internet / Tether' : 'Internet / Management';
+    html += '<option value="internet"' + (role === 'internet' ? ' selected' : '') + '>' + internetLabel + '</option>';
     if (iface.wireless) {
         html += '<option value="show"' + (role === 'show' ? ' selected' : '') + '>Show Network</option>';
         html += '<option value="listener"' + (role === 'listener' ? ' selected' : '') + '>Listener Network (AP)</option>';
@@ -554,10 +555,9 @@ function showScanResults(ifaceName, res) {
             html += '<small>' + escHtml(ssid);
             if (signal) html += ' <span class="text-muted">(' + signal + ')</span>';
             html += '</small></a>';
-        });
-        html += '</div>';
-        resultsEl.show().html(html);
     });
+    html += '</div>';
+    resultsEl.show().html(html);
 }
 
 // =============================================================================

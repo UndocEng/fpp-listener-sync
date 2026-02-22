@@ -82,7 +82,10 @@ sudo cp "$PLUGIN_DIR/www/listen/version.php" "$LISTEN_WEB/version.php"
 sudo cp "$PLUGIN_DIR/www/listen/version-debug.php" "$LISTEN_WEB/version-debug.php"
 sudo cp "$PLUGIN_DIR/www/listen/detect.php" "$LISTEN_WEB/detect.php"
 sudo cp "$PLUGIN_DIR/www/listen/portal-api.php" "$LISTEN_WEB/portal-api.php"
-sudo cp "$PLUGIN_DIR/www/listen/logo.png" "$LISTEN_WEB/logo.png"
+sudo cp "$PLUGIN_DIR/www/listen/logo_cyan.png" "$LISTEN_WEB/logo_cyan.png"
+sudo cp "$PLUGIN_DIR/www/listen/logo_amber.png" "$LISTEN_WEB/logo_amber.png"
+sudo cp "$PLUGIN_DIR/www/listen/dashboard.js" "$LISTEN_WEB/dashboard.js"
+sudo cp "$PLUGIN_DIR/www/listen/dashboard.css" "$LISTEN_WEB/dashboard.css"
 sudo cp "$PLUGIN_DIR/VERSION" "$LISTEN_WEB/VERSION"
 sudo cp "$PLUGIN_DIR/www/qrcode.html" "$APACHE_ROOT/qrcode.html"
 sudo cp "$PLUGIN_DIR/www/print-sign.html" "$APACHE_ROOT/print-sign.html"
@@ -137,6 +140,12 @@ header('Location: plugin.php?plugin=fpp-listener-sync&page=plugin.php');
 exit;
 PHPREDIRECT
 ok "Network page redirects to plugin dashboard"
+
+# Also copy the original as a directly-accessible page (for "Advanced" button)
+if [ -f "$NETCONFIG.listener-backup" ]; then
+  sudo cp "$NETCONFIG.listener-backup" "$APACHE_ROOT/networkconfig-original.php"
+  ok "Original network page available at /networkconfig-original.php"
+fi
 
 # Music symlink
 if [ ! -L "$APACHE_ROOT/music" ] && [ ! -d "$APACHE_ROOT/music" ]; then

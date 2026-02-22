@@ -9,9 +9,9 @@
 // FPP's plugin.php handler wraps this with header/navbar/footer.
 // jQuery 3.7.1 and Bootstrap 5 are available from FPP.
 //
-// JS/CSS are in static/ (not js/ or css/) to avoid FPP's auto-include which
-// serves files with immutable 1-year cache and no version busting.
-// We include them manually with a version query parameter.
+// JS/CSS are in www/listen/ and served directly by Apache (not through FPP's
+// plugin.php file handler which produces malformed Content-Type headers that
+// browsers reject with X-Content-Type-Options: nosniff).
 // =============================================================================
 
 $version = trim(@file_get_contents(dirname(__FILE__) . '/VERSION') ?: 'unknown');
@@ -19,18 +19,18 @@ $vEnc = htmlspecialchars($version, ENT_QUOTES, 'UTF-8');
 $pluginName = 'fpp-listener-sync';
 ?>
 
-<!-- Cache-busted CSS/JS (served from static/, not js/ or css/) -->
-<link rel="stylesheet" href="plugin.php?plugin=<?= $pluginName ?>&file=static/dashboard.css&nopage=1&v=<?= $vEnc ?>">
-<script src="plugin.php?plugin=<?= $pluginName ?>&file=static/dashboard.js&nopage=1&v=<?= $vEnc ?>"></script>
+<!-- Cache-busted CSS/JS (served directly by Apache, not through FPP's PHP handler) -->
+<link rel="stylesheet" href="/listen/dashboard.css?v=<?= $vEnc ?>">
+<script src="/listen/dashboard.js?v=<?= $vEnc ?>"></script>
 
 <!-- Page Header -->
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1><i class="fas fa-network-wired"></i> Network Configuration
-        <img src="/listen/logo.png" alt="" style="height:36px; vertical-align:middle; margin-left:12px;">
+        <img src="/listen/logo_amber.png" alt="" style="height:36px; vertical-align:middle; margin-left:12px;">
         <small class="text-muted" style="font-size:0.4em; vertical-align:middle; margin-left:4px;">v<?= $vEnc ?></small>
     </h1>
     <div>
-        <a href="plugin.php?plugin=fpp-listener-sync&page=fpp-network.php" class="btn btn-outline-secondary btn-sm"
+        <a href="/networkconfig-original.php" class="btn btn-outline-secondary btn-sm"
            title="Open FPP's original network configuration page">
             <i class="fas fa-cogs"></i> Advanced (FPP)
         </a>
