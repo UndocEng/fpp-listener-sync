@@ -352,4 +352,12 @@ HTTP2=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/status.ph
 [ "$HTTP2" = "200" ] && ok "status.php: HTTP 200" || { printf '%b\n' "${RED}[FAIL] status.php: HTTP $HTTP2${NC}"; ERRORS=$((ERRORS+1)); }
 
 echo ""
-[ $ERRORS -eq 0 ] && printf '%b\n' "${GREEN}All checks passed. Ready to go!${NC}" || printf '%b\n' "${RED}$ERRORS check(s) failed.${NC}"
+if [ $ERRORS -eq 0 ]; then
+  echo "========================================="
+  printf '%b\n' "${GREEN}  Install successful! Running v${VERSION}${NC}"
+  echo "========================================="
+else
+  echo "========================================="
+  printf '%b\n' "${RED}  Install completed with $ERRORS error(s). Running v${VERSION}${NC}"
+  echo "========================================="
+fi
