@@ -319,42 +319,24 @@ function buildTetherSection(iface) {
     var tetherIface = fppS.TetherInterface || '';
     var tetherSsid = fppS.TetherSSID || 'FPP';
 
-    // Checkbox checked if tethering is enabled AND assigned to this interface
+    // Determine current tether status for display
     var isEnabled = (tetherEnabled !== '2');
     var isThisIface = tetherIface ? (tetherIface === iface.name) : false;
-    var isChecked = isEnabled && isThisIface;
+    var isActive = isEnabled && isThisIface;
 
-    // Mode label
-    var modeLabel = 'If no connection';
-    if (tetherEnabled === '1') modeLabel = 'Always';
-    else if (tetherEnabled === '2') modeLabel = 'Disabled';
+    var statusText = 'Disabled';
+    if (isActive) {
+        var modeLabel = (tetherEnabled === '1') ? 'Always' : 'If no connection';
+        statusText = modeLabel + ' &bull; SSID: ' + escHtml(tetherSsid) + ' &bull; IP: 192.168.8.1';
+    }
 
     var html = '<hr class="my-2">';
     html += '<div class="row mb-2">';
     html += '<label class="col-sm-3 col-form-label"><i class="fas fa-mobile-alt me-1"></i> Tether</label>';
-    html += '<div class="col-sm-9">';
-    // Top line: description text left, checkbox + label right
-    html += '<div class="d-flex align-items-center justify-content-between">';
-    html += '<small class="text-muted">';
-    if (isChecked) {
-        html += 'Mode: ' + modeLabel + ' &bull; SSID: ' + escHtml(tetherSsid) + ' &bull; IP: 192.168.8.1';
-    } else {
-        html += 'Creates a hotspot if WiFi disconnects. Requires reboot.';
-    }
-    html += '</small>';
-    html += '<div class="form-check mb-0 ms-2 text-nowrap">';
-    html += '<label class="form-check-label" for="tether-' + iface.name + '">Enable Tether</label>';
-    html += '<input class="form-check-input tether-check ms-2" type="checkbox" id="tether-' + iface.name + '"';
-    html += ' data-iface="' + iface.name + '"' + (isChecked ? ' checked' : '') + '>';
-    html += '</div>';
-    html += '</div>';
-    // Tether Settings button below, aligned right (only when enabled)
-    if (isChecked) {
-        html += '<div class="text-end mt-1">';
-        html += '<a href="/networkconfig-original.php" target="_blank" class="btn btn-outline-info btn-sm">';
-        html += '<i class="fas fa-cog"></i> Tether Settings</a>';
-        html += '</div>';
-    }
+    html += '<div class="col-sm-9 d-flex align-items-center justify-content-between">';
+    html += '<small class="text-muted">' + statusText + '</small>';
+    html += '<a href="/networkconfig-original.php" target="_blank" class="btn btn-outline-info btn-sm ms-2 text-nowrap">';
+    html += '<i class="fas fa-cog"></i> Tether Settings</a>';
     html += '</div></div>';
 
     return html;
@@ -822,30 +804,7 @@ $(document).ready(function() {
         $('.scan-results-' + iface).slideUp(200);
     });
 
-    // Tethering checkbox toggle (uses FPP's built-in tethering settings)
-    $(document).on('change', '.tether-check', function() {
-        var iface = $(this).data('iface');
-        var checked = $(this).is(':checked');
-
-        if (typeof SetSetting === 'function') {
-            if (checked) {
-                SetSetting('TetherInterface', iface, 0, 1, true);
-                SetSetting('EnableTethering', '0', 0, 1);
-            } else {
-                SetSetting('EnableTethering', '2', 0, 1);
-            }
-        } else {
-            // Fallback: direct API calls if FPP's SetSetting is unavailable
-            if (checked) {
-                $.ajax({ url: '/api/settings/TetherInterface', method: 'PUT', data: iface });
-                $.ajax({ url: '/api/settings/EnableTethering', method: 'PUT', data: '0' });
-            } else {
-                $.ajax({ url: '/api/settings/EnableTethering', method: 'PUT', data: '2' });
-            }
-            $.jGrowl('Tethering ' + (checked ? 'enabled' : 'disabled') + '. Reboot required.', { themeState: 'success' });
-        }
-        setTimeout(loadDashboard, 1000);
-    });
+    // Tethering is now managed via FPP's original network config page (Tether Settings button)
 
     // Password show/hide toggle
     $(document).on('click', '.btn-toggle-pw', function() {
