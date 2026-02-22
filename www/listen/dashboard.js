@@ -206,9 +206,6 @@ function buildInternetSettings(iface, fppData) {
 
         // Scan results (hidden initially)
         html += '<div class="scan-results-' + iface.name + ' mb-2" style="display:none;"></div>';
-
-        // Tethering section (uses FPP's built-in tethering)
-        html += buildTetherSection(iface);
     }
 
     // Protocol radio
@@ -230,6 +227,9 @@ function buildInternetSettings(iface, fppData) {
     html += inputRow(iface.name, 'netmask', 'Netmask', mask, '255.255.255.0');
     html += inputRow(iface.name, 'gateway', 'Gateway', gw, 'e.g. 192.168.1.1');
     html += '</div>';
+
+    // Tethering section (uses FPP's built-in tethering)
+    html += buildTetherSection(iface);
 
     // Save button
     html += '<div class="mt-3">';
@@ -272,9 +272,6 @@ function buildShowSettings(iface, fppData) {
     // Scan results (hidden initially)
     html += '<div class="scan-results-' + iface.name + ' mb-2" style="display:none;"></div>';
 
-    // Tethering section (uses FPP's built-in tethering)
-    html += buildTetherSection(iface);
-
     // Protocol radio
     html += '<div class="row mb-2">';
     html += '<label class="col-sm-3 col-form-label">Protocol</label>';
@@ -294,6 +291,9 @@ function buildShowSettings(iface, fppData) {
     html += inputRow(iface.name, 'netmask', 'Netmask', mask, '255.255.255.0');
     html += inputRow(iface.name, 'gateway', 'Gateway', gw, 'e.g. 10.1.66.1');
     html += '</div>';
+
+    // Tethering section (uses FPP's built-in tethering)
+    html += buildTetherSection(iface);
 
     // Save button
     html += '<div class="mt-3">';
@@ -338,7 +338,7 @@ function buildTetherSection(iface) {
     html += '<input class="form-check-input tether-check" type="checkbox" id="tether-' + iface.name + '"';
     html += ' data-iface="' + iface.name + '"' + (isChecked ? ' checked' : '') + '>';
     html += '<label class="form-check-label fw-bold" for="tether-' + iface.name + '">';
-    html += '<i class="fas fa-mobile-alt me-1"></i> Tethering</label>';
+    html += '<i class="fas fa-mobile-alt ms-1 me-2"></i> Tethering</label>';
     html += '</div>';
     html += '<a href="/networkconfig-original.php" target="_blank" class="btn btn-outline-info btn-sm">';
     html += '<i class="fas fa-cog"></i> Tether Settings</a>';

@@ -114,7 +114,7 @@ $pluginName = 'fpp-listener-sync';
             </button>
         </div>
     </div>
-    <div id="logs-collapse" class="collapse">
+    <div id="logs-collapse" class="collapse show">
         <div class="card-body">
             <div id="selftest-results" class="mb-3" style="display:none;"></div>
             <div class="mb-2">
