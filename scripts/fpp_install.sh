@@ -353,6 +353,11 @@ HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/ 2>/dev/nu
 HTTP2=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/listen/status.php 2>/dev/null)
 [ "$HTTP2" = "200" ] && ok "status.php: HTTP 200" || { printf '%b\n' "${RED}[FAIL] status.php: HTTP $HTTP2${NC}"; ERRORS=$((ERRORS+1)); }
 
+# Fix git ownership so FPP plugin updater (runs as fpp) can pull future updates
+if [ -d "$PLUGIN_DIR/.git" ]; then
+  sudo chown -R fpp:fpp "$PLUGIN_DIR/.git" 2>/dev/null || true
+fi
+
 echo ""
 if [ $ERRORS -eq 0 ]; then
   echo "========================================="
